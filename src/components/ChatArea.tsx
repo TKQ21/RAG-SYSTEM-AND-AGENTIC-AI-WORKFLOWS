@@ -50,14 +50,12 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 grid-bg">
         {messages.length === 0 ? (
-          <EmptyState mode={mode} />
+          <EmptyState mode={mode} onSend={onSend} />
         ) : (
           <div className="mx-auto max-w-3xl space-y-6">
-            <AnimatePresence>
-              {messages.map((msg) => (
-                <ChatMessage key={msg.id} message={msg} />
-              ))}
-            </AnimatePresence>
+            {messages.map((msg) => (
+              <ChatMessage key={msg.id} message={msg} />
+            ))}
 
             {/* Live agent steps */}
             {isProcessing && currentSteps.length > 0 && (
@@ -90,7 +88,7 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
   );
 }
 
-function EmptyState({ mode }: { mode: AgentMode }) {
+function EmptyState({ mode, onSend }: { mode: AgentMode; onSend: (msg: string) => void }) {
   const suggestions: Record<AgentMode, string[]> = {
     documents: [
       "Summarize the key findings from my paper",
@@ -105,7 +103,7 @@ function EmptyState({ mode }: { mode: AgentMode }) {
     research: [
       "What are the latest trends in RAG systems?",
       "Compare transformer architectures for NLP tasks",
-      "Analyze the state of MLOps in 2024",
+      "Analyze the state of MLOps in 2025",
     ],
   };
 
@@ -132,6 +130,7 @@ function EmptyState({ mode }: { mode: AgentMode }) {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 + i * 0.1 }}
+              onClick={() => onSend(s)}
               className="rounded-lg border border-border bg-card px-4 py-2.5 text-left text-xs text-muted-foreground transition-all hover:border-primary/30 hover:bg-secondary hover:text-foreground"
             >
               {s}
