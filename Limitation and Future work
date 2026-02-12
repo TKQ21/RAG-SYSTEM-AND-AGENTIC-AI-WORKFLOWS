@@ -1,0 +1,7 @@
+### Known Limitations
+- Image-heavy PDFs need OCR fallback
+- No authentication yet
+
+### Future Improvements
+- Source citation per line
+- Model caching for speed
