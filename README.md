@@ -1,73 +1,191 @@
-# Welcome to your Lovable project
+🚀 Agentic RAG AI System (FAANG-Level Applied AI Project)
+  
+  
+  project link : https://ragsystemagenticai.lovable.app/
 
-## Project info
+📌 Overview
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+This project implements a production-oriented Retrieval-Augmented Generation (RAG) system combined with agentic AI workflows to solve real-world knowledge grounding and reasoning problems.
 
-## How can I edit this code?
+The system supports:
 
-There are several ways of editing your application.
+Document-grounded question answering (RAG)
 
-**Use Lovable**
+Agent-based multi-step reasoning
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+A domain-specific Data Science Helper
 
-Changes made via Lovable will be committed automatically to this repo.
+An autonomous Auto Research Agent
 
-**Use your preferred IDE**
+The focus of this project is AI system design, reliability, and evaluation, not just UI.
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+🧠 Why this project is different
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+Most AI demos:
 
-Follow these steps:
+Hallucinate
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+Lack evaluation
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+Cannot explain decisions
 
-# Step 3: Install the necessary dependencies.
-npm i
+Are single-step prompt wrappers
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+This system is designed with:
 
-**Edit a file directly in GitHub**
+Source-grounded answers
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Hallucination guardrails
 
-**Use GitHub Codespaces**
+Agent planning & reasoning
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+Evaluation metrics
 
-## What technologies are used for this project?
+Cost & latency awareness
 
-This project is built with:
+🧩 Core Components
+1️⃣ Retrieval-Augmented Generation (RAG)
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+User uploads PDFs
 
-## How can I deploy this project?
+Documents are chunked and embedded
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Relevant context is retrieved per query
 
-## Can I connect a custom domain to my Lovable project?
+LLM generates answers only from retrieved context
 
-Yes, you can!
+Guarantee:
+If information is not found in documents, the system explicitly responds:
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+“Answer not found in the provided documents.”
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+2️⃣ Agentic AI Layer
+
+Instead of a single prompt, the system uses agent-style task execution:
+
+High-level agent flow:
+
+Understand user intent
+
+Decide retrieval vs reasoning
+
+Call appropriate tools
+
+Synthesize structured output
+
+This enables:
+
+Multi-step reasoning
+
+Research-style responses
+
+Decision-based execution
+
+3️⃣ Data Science Helper (Domain Agent)
+
+A specialized AI agent for data science workflows:
+
+Model selection (imbalanced vs balanced data)
+
+Metric recommendation (PR-AUC, F1, MCC)
+
+Overfitting / underfitting diagnosis
+
+Practical ML trade-offs
+
+Runnable Python examples
+
+Designed to mimic senior data scientist reasoning.
+
+4️⃣ Auto Research Agent
+
+An autonomous research agent that:
+
+Breaks complex questions into sub-tasks
+
+Compares approaches and alternatives
+
+Explains assumptions and trade-offs
+
+Produces structured, executive-level reports
+
+🏗️ System Architecture
+User
+ │
+ │ Query / PDF Upload
+ ▼
+Frontend (UI)
+ │
+ ▼
+AI Backend
+ ├─ Document Ingestion
+ ├─ Vector Retrieval (RAG)
+ ├─ Agent Decision Layer
+ │    ├─ Data Science Helper
+ │    └─ Research Agent
+ ├─ Hallucination Guardrails
+ └─ Response Synthesis
+ │
+ ▼
+LLM
+ │
+ ▼
+Source-Grounded Answer
+
+🛡️ Hallucination Control
+
+Answers are restricted to retrieved context
+
+Explicit “not found” responses
+
+No unsupported claims
+
+Agent logic prevents speculative outputs
+
+📊 Evaluation Strategy (FAANG-Level)
+
+RAG Evaluation:
+
+Context precision
+
+Context recall
+
+Answer faithfulness
+
+Agent Evaluation:
+
+Task completion rate
+
+Reasoning depth
+
+Failure recovery behavior
+
+Manual test cases are included to validate correctness.
+
+⚙️ Cost & Latency Considerations
+
+Tuned chunk sizes
+
+Controlled top-k retrieval
+
+Reduced unnecessary LLM calls
+
+Optimized prompt length
+
+Designed with production constraints in mind.
+
+🔐 Security & Data Isolation
+
+Document context scoped per session
+
+No cross-document leakage
+
+Safe prompt boundaries
+
+🧪 Validation Examples
+
+Answers verified using unique document content
+
+Cross-checked against uploaded PDFs
+
+Agent outputs tested for consistency and structure
