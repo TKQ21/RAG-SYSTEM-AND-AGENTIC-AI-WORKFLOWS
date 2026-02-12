@@ -109,6 +109,25 @@ Explains assumptions and trade-offs
 
 Produces structured, executive-level reports
 
+### What I Implemented
+- Document ingestion and query handling flow
+- Prompt orchestration for multi-step reasoning
+- Agent-style task decomposition for analysis
+- Frontend dashboard for interaction and results
+
+ ## ⚠️ Why This Is a Prototype
+- The system currently passes document text directly as context (no vector database)
+- Image-heavy PDFs require OCR or vision-based extraction
+- No authentication or rate limiting implemented
+- Evaluation metrics are manually validated
+
+ ## 🚀 Future Improvements
+- Integrate a vector database for scalable RAG
+- Add source-level citations for each response
+- Implement OCR fallback for image-based PDFs
+- Add automated evaluation and monitoring
+- Introduce authentication and access control
+
 🏗️ System Architecture
 User
  │
