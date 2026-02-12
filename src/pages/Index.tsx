@@ -1,12 +1,36 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { AppSidebar } from "@/components/AppSidebar";
+import { ChatArea } from "@/components/ChatArea";
+import { useAgentChat } from "@/hooks/useAgentChat";
 
 const Index = () => {
+  const {
+    messages,
+    isProcessing,
+    currentSteps,
+    mode,
+    setMode,
+    documents,
+    sendMessage,
+    uploadDocument,
+    removeDocument,
+  } = useAgentChat();
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      <AppSidebar
+        mode={mode}
+        onModeChange={setMode}
+        documents={documents}
+        onUpload={uploadDocument}
+        onRemoveDoc={removeDocument}
+      />
+      <ChatArea
+        messages={messages}
+        currentSteps={currentSteps}
+        isProcessing={isProcessing}
+        mode={mode}
+        onSend={sendMessage}
+      />
     </div>
   );
 };
