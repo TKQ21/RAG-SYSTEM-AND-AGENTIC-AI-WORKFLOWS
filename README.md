@@ -1,7 +1,8 @@
 🚀 Agentic RAG AI System (FAANG-Level Applied AI Project)
   
   
-  project link : https://ragsystemagenticai.lovable.app/
+  project link : https://ai-rag-system.lovable.app
+  https://ragsystemagenticai.lovable.app/
 
 📌 Overview
 
