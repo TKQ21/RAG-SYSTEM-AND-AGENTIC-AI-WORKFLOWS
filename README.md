@@ -3,7 +3,6 @@
   
   project link : https://ai-rag-system.lovable.app
   
-  https://ragsystemagenticai.lovable.app/
 
 📌 Overview
 
