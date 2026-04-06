@@ -1,9 +1,11 @@
 import { useState, useCallback } from "react";
 import type { ChatMessage, AgentStep, AgentMode, UploadedDocument } from "@/types/agent";
+import { toast } from "sonner";
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-chat`;
+const PROCESS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-document`;
 
 export function useAgentChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -11,7 +13,6 @@ export function useAgentChat() {
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [mode, setMode] = useState<AgentMode>("documents");
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
-  const [documentTexts, setDocumentTexts] = useState<Map<string, string>>(new Map());
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
     const fullStep: AgentStep = { ...step, id: generateId(), timestamp: Date.now() };
@@ -39,27 +40,20 @@ export function useAgentChat() {
     setIsProcessing(true);
     setCurrentSteps([]);
 
-    // Show thinking steps
     const thinkId = addStep({ type: "thinking", label: "Analyzing query intent", status: "running" });
 
     try {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 200));
       updateStep(thinkId, { status: "done" });
 
-      // Build document context from extracted text
-      let documentContext = "";
-      if (mode === "documents" && documentTexts.size > 0) {
-        const searchId = addStep({ type: "search", label: "Searching document embeddings", detail: `${documentTexts.size} docs`, status: "running" });
-        await new Promise((r) => setTimeout(r, 200));
-        documentContext = Array.from(documentTexts.entries())
-          .map(([name, text]) => `--- Document: ${name} ---\n${text}`)
-          .join("\n\n");
+      if (mode === "documents") {
+        const searchId = addStep({ type: "search", label: "Semantic search across document chunks", status: "running" });
+        await new Promise((r) => setTimeout(r, 100));
         updateStep(searchId, { status: "done" });
       }
 
-      const analyzeId = addStep({ type: "analyze", label: "Processing with AI model", detail: "gemini-3-flash", status: "running" });
+      const analyzeId = addStep({ type: "analyze", label: "Generating response with AI", detail: "gemini-3-flash", status: "running" });
 
-      // Build conversation history for context
       const apiMessages = messages
         .concat(userMsg)
         .map((m) => ({ role: m.role, content: m.content }));
@@ -70,11 +64,7 @@ export function useAgentChat() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({
-          messages: apiMessages,
-          mode,
-          documentContext: documentContext || undefined,
-        }),
+        body: JSON.stringify({ messages: apiMessages, mode }),
       });
 
       if (!resp.ok) {
@@ -85,7 +75,6 @@ export function useAgentChat() {
       updateStep(analyzeId, { status: "done" });
       const resultId = addStep({ type: "result", label: "Streaming response", status: "running" });
 
-      // Stream the response
       const reader = resp.body!.getReader();
       const decoder = new TextDecoder();
       let textBuffer = "";
@@ -107,17 +96,13 @@ export function useAgentChat() {
           if (!line.startsWith("data: ")) continue;
 
           const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") {
-            streamDone = true;
-            break;
-          }
+          if (jsonStr === "[DONE]") { streamDone = true; break; }
 
           try {
             const parsed = JSON.parse(jsonStr);
             const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
             if (delta) {
               assistantContent += delta;
-              // Update the assistant message in real-time
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 if (last?.role === "assistant" && last.id === "streaming") {
@@ -125,15 +110,7 @@ export function useAgentChat() {
                     i === prev.length - 1 ? { ...m, content: assistantContent } : m
                   );
                 }
-                return [
-                  ...prev,
-                  {
-                    id: "streaming",
-                    role: "assistant",
-                    content: assistantContent,
-                    timestamp: Date.now(),
-                  },
-                ];
+                return [...prev, { id: "streaming", role: "assistant", content: assistantContent, timestamp: Date.now() }];
               });
             }
           } catch {
@@ -143,7 +120,7 @@ export function useAgentChat() {
         }
       }
 
-      // Flush remaining buffer
+      // Flush remaining
       if (textBuffer.trim()) {
         for (let raw of textBuffer.split("\n")) {
           if (!raw) continue;
@@ -162,13 +139,9 @@ export function useAgentChat() {
 
       updateStep(resultId, { status: "done" });
 
-      // Finalize the assistant message with steps
-      const finalSteps = [...currentSteps];
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === "streaming"
-            ? { ...m, id: generateId(), steps: finalSteps }
-            : m
+          m.id === "streaming" ? { ...m, id: generateId() } : m
         )
       );
     } catch (e) {
@@ -184,48 +157,67 @@ export function useAgentChat() {
       setIsProcessing(false);
       setCurrentSteps([]);
     }
-  }, [isProcessing, messages, mode, documentTexts, addStep, updateStep, currentSteps]);
+  }, [isProcessing, messages, mode, addStep, updateStep]);
 
   const uploadDocument = useCallback(async (file: File) => {
+    const docId = generateId();
     const doc: UploadedDocument = {
-      id: generateId(),
+      id: docId,
       name: file.name,
       type: file.type,
       size: file.size,
       uploadedAt: Date.now(),
+      chunks: 0,
     };
 
-    // Extract text from the file
-    try {
-      const text = await file.text();
-      const truncated = text.slice(0, 50000); // Limit to ~50k chars for context window
-      const chunks = Math.ceil(truncated.length / 1000);
-      doc.chunks = chunks;
-
-      setDocumentTexts((prev) => {
-        const next = new Map(prev);
-        next.set(file.name, truncated);
-        return next;
-      });
-    } catch {
-      doc.chunks = 0;
-    }
-
     setDocuments((prev) => [...prev, doc]);
+
+    try {
+      // Extract text from file
+      const text = await file.text();
+      const truncated = text.slice(0, 100000); // 100k chars max
+
+      toast.info(`Processing "${file.name}"...`);
+
+      // Send to process-document edge function
+      const resp = await fetch(PROCESS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({
+          documentName: file.name,
+          documentText: truncated,
+          mimeType: file.type,
+          fileSize: file.size,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: "Processing failed" }));
+        throw new Error(err.error || "Processing failed");
+      }
+
+      const result = await resp.json();
+      
+      // Update document with chunk count
+      setDocuments((prev) =>
+        prev.map((d) =>
+          d.id === docId ? { ...d, chunks: result.chunkCount } : d
+        )
+      );
+
+      toast.success(`"${file.name}" processed: ${result.chunkCount} chunks stored for semantic search`);
+    } catch (e) {
+      console.error("Upload error:", e);
+      toast.error(`Failed to process "${file.name}": ${e instanceof Error ? e.message : "Unknown error"}`);
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    }
   }, []);
 
   const removeDocument = useCallback((id: string) => {
-    setDocuments((prev) => {
-      const doc = prev.find((d) => d.id === id);
-      if (doc) {
-        setDocumentTexts((prevTexts) => {
-          const next = new Map(prevTexts);
-          next.delete(doc.name);
-          return next;
-        });
-      }
-      return prev.filter((d) => d.id !== id);
-    });
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
   }, []);
 
   return {

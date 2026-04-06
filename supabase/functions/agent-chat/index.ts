@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,54 +7,53 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Must match process-document's embedding function exactly
+function simpleEmbed(text: string): number[] {
+  const vec = new Array(384).fill(0);
+  const lower = text.toLowerCase();
+  for (let i = 0; i < lower.length; i++) {
+    vec[i % 384] += lower.charCodeAt(i) / 1000;
+  }
+  for (let i = 0; i < lower.length - 1; i++) {
+    const bigram = lower.charCodeAt(i) * 31 + lower.charCodeAt(i + 1);
+    vec[(bigram) % 384] += 0.5 / 1000;
+  }
+  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
+  return vec.map(v => v / mag);
+}
+
 const SYSTEM_PROMPTS: Record<string, string> = {
-  documents: `You are an expert RAG AI assistant for Data Science Engineers. The user has uploaded documents and is asking questions about them.
+  documents: `You are an expert RAG AI assistant for Data Science Engineers, similar to NotebookLM. Users upload documents and ask questions about them.
 
 Your behavior:
-- Answer questions based on the document content provided in the conversation
-- If no document content is provided, explain that documents need to be uploaded first
-- Quote relevant sections when possible
-- Be precise and avoid hallucination — if the answer isn't in the documents, say so
-- Format responses with markdown: use code blocks, bold, headers, bullet points
-- When providing code examples, use proper syntax highlighting
+- Answer ONLY based on the document context provided below. If the answer isn't in the documents, say "I couldn't find this information in the uploaded documents."
+- Quote relevant sections verbatim when possible, using blockquotes
+- Be precise — no hallucination, no guessing
+- For tables/structured data in documents, reproduce them as markdown tables
+- If asked about subjects, topics, paper details, exam info etc — extract them from the document content
+- Understand semantic meaning: "what subjects are there" should find subject lists even if not explicitly labeled
+- Format responses with markdown: headers, bold, bullet points, code blocks
+- Think step by step and cite which document each piece of info comes from
 
-Always think step by step:
-1. Identify the user's question
-2. Search through provided document context
-3. Synthesize a clear, evidence-based answer
-4. Cite sources when possible`,
+IMPORTANT: You receive retrieved document chunks below. Use them as your ONLY source of truth.`,
 
   datascience: `You are a senior Data Science & ML Engineering assistant. You help engineers with:
-
 - Writing Python code for data analysis, ML pipelines, feature engineering
 - Explaining algorithms and statistical concepts
 - Debugging ML code and suggesting improvements
 - Recommending best practices for model training, evaluation, deployment
 - Working with libraries like pandas, scikit-learn, PyTorch, TensorFlow, XGBoost
 
-Your behavior:
-- Always provide complete, runnable code examples
-- Explain trade-offs and when to use different approaches
-- Include performance considerations and scalability notes
-- Use proper markdown formatting with code blocks
-- Think step by step through complex problems`,
+Always provide complete, runnable code examples with explanations.`,
 
   research: `You are an autonomous research agent for Data Science Engineers. You perform multi-step research analysis.
 
 Your behavior:
 - Break down research questions into sub-tasks
-- Analyze topics from multiple angles
 - Provide structured reports with sections, tables, and data points
 - Compare approaches and technologies objectively
 - Include trends, statistics, and actionable recommendations
-- Format output as a structured research report with:
-  - Executive Summary
-  - Key Findings (numbered)
-  - Data/Comparison Tables (markdown tables)
-  - Recommendations
-  - Sources/References when applicable
-
-Think like a research analyst: be thorough, data-driven, and objective.`,
+- Format as structured research report with Executive Summary, Key Findings, Recommendations`,
 };
 
 serve(async (req) => {
@@ -62,22 +62,90 @@ serve(async (req) => {
   }
 
   try {
-    const { messages, mode, documentContext } = await req.json();
+    const { messages, mode } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     const systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.documents;
+    const userQuery = messages[messages.length - 1]?.content || "";
 
-    // Build messages array with system prompt and optional document context
+    // Build AI messages
     const aiMessages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
     ];
 
-    if (documentContext && documentContext.length > 0) {
-      aiMessages.push({
-        role: "system",
-        content: `Here are the uploaded document contents for reference:\n\n${documentContext}`,
-      });
+    // For documents mode, perform semantic search
+    if (mode === "documents" && userQuery) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const queryEmbedding = simpleEmbed(userQuery);
+
+      // Fetch all chunks and do cosine similarity in JS (reliable, no RPC type issues)
+      const { data: allChunks, error: chunkError } = await supabase
+        .from("document_chunks")
+        .select("id, document_name, chunk_index, content, embedding")
+        .limit(500);
+
+      if (chunkError) {
+        console.error("Chunk fetch error:", JSON.stringify(chunkError));
+      }
+
+      let rankedChunks: any[] = [];
+      if (allChunks && allChunks.length > 0) {
+        // Compute cosine similarity for each chunk
+        rankedChunks = allChunks
+          .map((c: any) => {
+            let sim = 0;
+            if (c.embedding) {
+              // Parse embedding string from pgvector format "[0.1,0.2,...]"
+              let emb: number[];
+              try {
+                emb = typeof c.embedding === "string" ? JSON.parse(c.embedding) : c.embedding;
+              } catch {
+                emb = [];
+              }
+              if (emb.length === queryEmbedding.length) {
+                let dot = 0, magA = 0, magB = 0;
+                for (let i = 0; i < emb.length; i++) {
+                  dot += emb[i] * queryEmbedding[i];
+                  magA += emb[i] * emb[i];
+                  magB += queryEmbedding[i] * queryEmbedding[i];
+                }
+                const denom = Math.sqrt(magA) * Math.sqrt(magB);
+                sim = denom > 0 ? dot / denom : 0;
+              }
+            }
+            return { ...c, similarity: sim, embedding: undefined };
+          })
+          .sort((a: any, b: any) => b.similarity - a.similarity)
+          .slice(0, 10);
+
+        console.log(`Ranked ${allChunks.length} chunks, top similarity: ${rankedChunks[0]?.similarity?.toFixed(3)}`);
+      }
+
+      if (rankedChunks.length > 0) {
+        const contextText = rankedChunks
+          .map((c: any) => {
+            const sim = c.similarity != null ? ` (relevance: ${(c.similarity * 100).toFixed(1)}%)` : "";
+            return `[Source: ${c.document_name}, Chunk #${c.chunk_index}${sim}]\n${c.content}`;
+          })
+          .join("\n\n---\n\n");
+
+        aiMessages.push({
+          role: "system",
+          content: `Here are the most relevant document chunks retrieved via semantic search:\n\n${contextText}\n\nUse ONLY these chunks to answer the user's question. Cite the source document name.`,
+        });
+
+        console.log(`Context: ${rankedChunks.length} chunks for query "${userQuery.slice(0, 50)}..."`);
+      } else {
+        aiMessages.push({
+          role: "system",
+          content: "No documents have been uploaded yet, or no relevant chunks were found. Let the user know they should upload documents first.",
+        });
+        console.log("No chunks found");
+      }
     }
 
     aiMessages.push(...messages);
