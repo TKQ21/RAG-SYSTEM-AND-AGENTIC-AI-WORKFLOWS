@@ -81,37 +81,48 @@ serve(async (req) => {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       const queryEmbedding = simpleEmbed(userQuery);
-      const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
-      // Try semantic search via RPC first
+      // Fetch all chunks and do cosine similarity in JS (reliable, no RPC type issues)
+      const { data: allChunks, error: chunkError } = await supabase
+        .from("document_chunks")
+        .select("id, document_name, chunk_index, content, embedding")
+        .limit(500);
+
+      if (chunkError) {
+        console.error("Chunk fetch error:", JSON.stringify(chunkError));
+      }
+
       let rankedChunks: any[] = [];
-      try {
-        const { data: matchedChunks, error: rpcError } = await supabase.rpc("match_document_chunks", {
-          query_embedding: embeddingStr,
-          match_threshold: 0.0,
-          match_count: 10,
-        });
+      if (allChunks && allChunks.length > 0) {
+        // Compute cosine similarity for each chunk
+        rankedChunks = allChunks
+          .map((c: any) => {
+            let sim = 0;
+            if (c.embedding) {
+              // Parse embedding string from pgvector format "[0.1,0.2,...]"
+              let emb: number[];
+              try {
+                emb = typeof c.embedding === "string" ? JSON.parse(c.embedding) : c.embedding;
+              } catch {
+                emb = [];
+              }
+              if (emb.length === queryEmbedding.length) {
+                let dot = 0, magA = 0, magB = 0;
+                for (let i = 0; i < emb.length; i++) {
+                  dot += emb[i] * queryEmbedding[i];
+                  magA += emb[i] * emb[i];
+                  magB += queryEmbedding[i] * queryEmbedding[i];
+                }
+                const denom = Math.sqrt(magA) * Math.sqrt(magB);
+                sim = denom > 0 ? dot / denom : 0;
+              }
+            }
+            return { ...c, similarity: sim, embedding: undefined };
+          })
+          .sort((a: any, b: any) => b.similarity - a.similarity)
+          .slice(0, 10);
 
-        if (rpcError) {
-          console.error("RPC error:", JSON.stringify(rpcError));
-          // Fallback: fetch all chunks directly
-          const { data: allChunks } = await supabase
-            .from("document_chunks")
-            .select("id, document_name, chunk_index, content")
-            .limit(20);
-          rankedChunks = (allChunks || []).map(c => ({ ...c, similarity: 0.5 }));
-          console.log(`Fallback: ${rankedChunks.length} chunks loaded`);
-        } else {
-          rankedChunks = matchedChunks || [];
-          console.log(`Semantic search: ${rankedChunks.length} chunks matched`);
-        }
-      } catch (searchErr) {
-        console.error("Search exception:", searchErr);
-        const { data: allChunks } = await supabase
-          .from("document_chunks")
-          .select("id, document_name, chunk_index, content")
-          .limit(20);
-        rankedChunks = (allChunks || []).map(c => ({ ...c, similarity: 0.5 }));
+        console.log(`Ranked ${allChunks.length} chunks, top similarity: ${rankedChunks[0]?.similarity?.toFixed(3)}`);
       }
 
       if (rankedChunks.length > 0) {
@@ -127,13 +138,13 @@ serve(async (req) => {
           content: `Here are the most relevant document chunks retrieved via semantic search:\n\n${contextText}\n\nUse ONLY these chunks to answer the user's question. Cite the source document name.`,
         });
 
-        console.log(`Semantic search: ${chunks.length} chunks found for query "${userQuery.slice(0, 50)}..."`);
+        console.log(`Context: ${rankedChunks.length} chunks for query "${userQuery.slice(0, 50)}..."`);
       } else {
         aiMessages.push({
           role: "system",
           content: "No documents have been uploaded yet, or no relevant chunks were found. Let the user know they should upload documents first.",
         });
-        console.log("No chunks found for query");
+        console.log("No chunks found");
       }
     }
 
