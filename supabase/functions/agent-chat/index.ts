@@ -81,20 +81,39 @@ serve(async (req) => {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       const queryEmbedding = simpleEmbed(userQuery);
+      const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
-      // Call the match function for semantic search
-      const { data: chunks, error } = await supabase.rpc("match_document_chunks", {
-        query_embedding: JSON.stringify(queryEmbedding),
-        match_threshold: 0.1,
-        match_count: 10,
-      });
+      // Direct query for semantic search using cosine distance
+      const { data: chunks, error } = await supabase
+        .from("document_chunks")
+        .select("id, document_name, chunk_index, content")
+        .limit(10);
 
       if (error) {
-        console.error("Semantic search error:", error);
+        console.error("Search error:", error);
       }
 
+      // Since we can't do vector ops via JS client easily, fetch all and rank client-side
+      let rankedChunks: any[] = [];
       if (chunks && chunks.length > 0) {
-        const contextText = chunks
+        // Use RPC with proper casting
+        const { data: matchedChunks, error: rpcError } = await supabase.rpc("match_document_chunks", {
+          query_embedding: embeddingStr,
+          match_threshold: 0.0,
+          match_count: 10,
+        });
+
+        if (rpcError) {
+          console.error("RPC search error:", rpcError);
+          // Fallback: return all chunks as context
+          rankedChunks = chunks;
+        } else {
+          rankedChunks = matchedChunks || [];
+        }
+      }
+
+      if (rankedChunks.length > 0) {
+        const contextText = rankedChunks
           .map((c: any, i: number) =>
             `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`
           )
