@@ -83,20 +83,9 @@ serve(async (req) => {
       const queryEmbedding = simpleEmbed(userQuery);
       const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
-      // Direct query for semantic search using cosine distance
-      const { data: chunks, error } = await supabase
-        .from("document_chunks")
-        .select("id, document_name, chunk_index, content")
-        .limit(10);
-
-      if (error) {
-        console.error("Search error:", error);
-      }
-
-      // Since we can't do vector ops via JS client easily, fetch all and rank client-side
+      // Try semantic search via RPC first
       let rankedChunks: any[] = [];
-      if (chunks && chunks.length > 0) {
-        // Use RPC with proper casting
+      try {
         const { data: matchedChunks, error: rpcError } = await supabase.rpc("match_document_chunks", {
           query_embedding: embeddingStr,
           match_threshold: 0.0,
@@ -104,19 +93,33 @@ serve(async (req) => {
         });
 
         if (rpcError) {
-          console.error("RPC search error:", rpcError);
-          // Fallback: return all chunks as context
-          rankedChunks = chunks;
+          console.error("RPC error:", JSON.stringify(rpcError));
+          // Fallback: fetch all chunks directly
+          const { data: allChunks } = await supabase
+            .from("document_chunks")
+            .select("id, document_name, chunk_index, content")
+            .limit(20);
+          rankedChunks = (allChunks || []).map(c => ({ ...c, similarity: 0.5 }));
+          console.log(`Fallback: ${rankedChunks.length} chunks loaded`);
         } else {
           rankedChunks = matchedChunks || [];
+          console.log(`Semantic search: ${rankedChunks.length} chunks matched`);
         }
+      } catch (searchErr) {
+        console.error("Search exception:", searchErr);
+        const { data: allChunks } = await supabase
+          .from("document_chunks")
+          .select("id, document_name, chunk_index, content")
+          .limit(20);
+        rankedChunks = (allChunks || []).map(c => ({ ...c, similarity: 0.5 }));
       }
 
       if (rankedChunks.length > 0) {
         const contextText = rankedChunks
-          .map((c: any, i: number) =>
-            `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`
-          )
+          .map((c: any) => {
+            const sim = c.similarity != null ? ` (relevance: ${(c.similarity * 100).toFixed(1)}%)` : "";
+            return `[Source: ${c.document_name}, Chunk #${c.chunk_index}${sim}]\n${c.content}`;
+          })
           .join("\n\n---\n\n");
 
         aiMessages.push({
