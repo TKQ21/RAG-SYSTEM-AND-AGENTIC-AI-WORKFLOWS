@@ -29,12 +29,15 @@ function hasReadableText(text: string): boolean {
   return readable >= 20 && replacementChars <= sample.length * 0.1;
 }
 
-function mergePdfItems(items: PdfTextItem[]): string {
+function mergePdfItems(items: unknown[]): string {
   const lines: string[] = [];
   let currentLine = "";
   let lastY: number | null = null;
 
-  for (const item of items) {
+  for (const rawItem of items) {
+    if (!isPdfTextItem(rawItem)) continue;
+
+    const item = rawItem;
     const text = item.str?.replace(/\s+/g, " ").trim();
     if (!text) continue;
 
@@ -73,8 +76,7 @@ async function extractPdfText(file: File): Promise<string> {
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const textContent = await page.getTextContent();
-      const items = textContent.items.filter(isPdfTextItem);
-      const pageText = mergePdfItems(items);
+      const pageText = mergePdfItems(textContent.items);
       if (pageText) pages.push(pageText);
       page.cleanup();
     }
