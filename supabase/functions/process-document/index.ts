@@ -27,8 +27,17 @@ function sanitizeText(text: string): string {
   return text
     .replace(/\u0000/g, "")        // Remove null bytes
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ") // Replace control chars with space
-    .replace(/\s+/g, " ")          // Normalize whitespace
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function hasMeaningfulText(text: string): boolean {
+  const sample = text.slice(0, 4000);
+  const readable = sample.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+  const replacementChars = sample.match(/�/g)?.length ?? 0;
+  return readable >= 20 && replacementChars <= sample.length * 0.1;
 }
 
 // Chunk text into overlapping segments
@@ -77,6 +86,13 @@ serve(async (req) => {
     // Sanitize the entire text first to remove null bytes
     const cleanText = sanitizeText(documentText);
 
+    if (!hasMeaningfulText(cleanText)) {
+      return new Response(
+        JSON.stringify({ error: "Could not extract readable text from this file. Please upload a text-based PDF/TXT/DOCX file." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -107,13 +123,17 @@ serve(async (req) => {
 
     // 3. Generate embeddings and insert chunks in batches
     for (let i = 0; i < chunks.length; i += 20) {
-      const batch = chunks.slice(i, i + 20).map((content, idx) => ({
-        document_id: documentId,
-        document_name: documentName,
-        chunk_index: i + idx,
-        content: sanitizeText(content), // double-sanitize each chunk
-        embedding: JSON.stringify(simpleEmbed(content)),
-      }));
+      const batch = chunks.slice(i, i + 20).map((content, idx) => {
+        const sanitizedChunk = sanitizeText(content);
+
+        return {
+          document_id: documentId,
+          document_name: documentName,
+          chunk_index: i + idx,
+          content: sanitizedChunk,
+          embedding: JSON.stringify(simpleEmbed(sanitizedChunk)),
+        };
+      });
 
       const { error: chunkError } = await supabase
         .from("document_chunks")

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ChatMessage, AgentStep, AgentMode, UploadedDocument } from "@/types/agent";
 import { toast } from "sonner";
+import { extractDocumentText } from "@/lib/documentText";
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 
@@ -173,8 +174,8 @@ export function useAgentChat() {
     setDocuments((prev) => [...prev, doc]);
 
     try {
-      // Extract text from file
-      const text = await file.text();
+      // Extract readable text from the uploaded document
+      const text = await extractDocumentText(file);
       const truncated = text.slice(0, 100000); // 100k chars max
 
       toast.info(`Processing "${file.name}"...`);

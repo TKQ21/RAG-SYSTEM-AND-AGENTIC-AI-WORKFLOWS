@@ -22,6 +22,104 @@ function simpleEmbed(text: string): number[] {
   return vec.map(v => v / mag);
 }
 
+const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "what", "which", "who", "when", "where", "tell", "me",
+  "about", "for", "from", "with", "this", "that", "these", "those", "and", "or", "to", "of", "in",
+  "on", "my", "your", "please", "show", "give", "need", "do", "does", "did",
+]);
+
+const SEARCH_SYNONYMS: Record<string, string[]> = {
+  subject: ["subjects", "paper", "papers", "course", "courses", "topic", "topics", "subject code", "paper code"],
+  subjects: ["subject", "paper", "papers", "course", "courses", "subject code", "paper code"],
+  paper: ["subject", "subjects", "course", "courses", "exam", "examination", "paper code"],
+  papers: ["paper", "subject", "subjects", "course", "courses", "exam", "examination"],
+  details: ["detail", "information", "info", "record", "summary", "data"],
+  roll: ["roll", "number", "roll no", "roll number", "enrollment", "enrolment", "registration"],
+  exam: ["exam", "examination", "test", "session", "schedule", "paper"],
+  date: ["date", "day", "session", "schedule", "timing", "time"],
+  name: ["name", "candidate", "student", "applicant"],
+  marks: ["marks", "score", "result", "grade"],
+  center: ["center", "centre", "venue", "location"],
+  centre: ["center", "centre", "venue", "location"],
+};
+
+function normalizeForSearch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(text: string): string[] {
+  return normalizeForSearch(text)
+    .split(" ")
+    .filter((token) => token.length > 1 && !STOP_WORDS.has(token));
+}
+
+function expandQueryTerms(query: string): string[] {
+  const normalizedQuery = normalizeForSearch(query);
+  const terms = new Set<string>(tokenize(normalizedQuery));
+
+  for (const token of Array.from(terms)) {
+    for (const synonym of SEARCH_SYNONYMS[token] ?? []) {
+      terms.add(synonym);
+    }
+  }
+
+  if (normalizedQuery.includes("paper details")) {
+    ["subject", "subjects", "paper", "papers", "course", "date", "session", "code"].forEach((term) => terms.add(term));
+  }
+
+  if (normalizedQuery.includes("what subject") || normalizedQuery.includes("which subject")) {
+    ["subject", "subjects", "paper", "papers", "course", "course code", "subject code"].forEach((term) => terms.add(term));
+  }
+
+  return Array.from(terms);
+}
+
+function getReadabilityScore(text: string): number {
+  const sample = text.slice(0, 1000);
+  const readable = sample.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+  return readable / Math.max(sample.length, 1);
+}
+
+function getKeywordScore(chunkText: string, normalizedQuery: string, queryTerms: string[]): number {
+  const normalizedChunk = normalizeForSearch(chunkText);
+  const chunkTokens = new Set(tokenize(normalizedChunk));
+
+  let score = normalizedChunk.includes(normalizedQuery) ? 1.5 : 0;
+
+  for (const term of queryTerms) {
+    if (!term) continue;
+
+    if (term.includes(" ")) {
+      if (normalizedChunk.includes(term)) score += 1.25;
+      continue;
+    }
+
+    if (chunkTokens.has(term)) score += 1;
+    else if (normalizedChunk.includes(term)) score += 0.5;
+  }
+
+  return Math.min(1, score / Math.max(3, queryTerms.length * 0.8));
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom > 0 ? dot / denom : 0;
+}
+
 const SYSTEM_PROMPTS: Record<string, string> = {
   documents: `You are an expert RAG AI assistant like NotebookLM. You answer questions ONLY from the document content provided below.
 
@@ -63,6 +161,8 @@ serve(async (req) => {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       const queryEmbedding = simpleEmbed(userQuery);
+      const normalizedQuery = normalizeForSearch(userQuery);
+      const queryTerms = expandQueryTerms(userQuery);
 
       // Fetch all chunks and rank by cosine similarity in JS
       const { data: allChunks, error: chunkError } = await supabase
@@ -76,7 +176,17 @@ serve(async (req) => {
 
       let rankedChunks: any[] = [];
       if (allChunks && allChunks.length > 0) {
-        rankedChunks = allChunks
+        const readableChunks = allChunks.filter((chunk: any) => getReadabilityScore(chunk.content ?? "") > 0.2);
+
+        if (readableChunks.length === 0) {
+          aiMessages.push({
+            role: "system",
+            content: "The stored document text is unreadable, likely because the PDF was uploaded as raw binary instead of extracted text. Tell the user to re-upload the document.",
+          });
+          console.log("All stored chunks are unreadable for current documents");
+        }
+
+        rankedChunks = readableChunks
           .map((c: any) => {
             let sim = 0;
             if (c.embedding) {
@@ -86,28 +196,46 @@ serve(async (req) => {
                 const raw = typeof c.embedding === "string" ? c.embedding : String(c.embedding);
                 emb = JSON.parse(raw);
               } catch { emb = []; }
-              if (emb.length === queryEmbedding.length) {
-                let dot = 0, magA = 0, magB = 0;
-                for (let i = 0; i < emb.length; i++) {
-                  dot += emb[i] * queryEmbedding[i];
-                  magA += emb[i] * emb[i];
-                  magB += queryEmbedding[i] * queryEmbedding[i];
-                }
-                const denom = Math.sqrt(magA) * Math.sqrt(magB);
-                sim = denom > 0 ? dot / denom : 0;
-              }
+              if (emb.length === queryEmbedding.length) sim = cosineSimilarity(emb, queryEmbedding);
             }
-            return { document_name: c.document_name, chunk_index: c.chunk_index, content: c.content, similarity: sim };
-          })
-          .sort((a: any, b: any) => b.similarity - a.similarity)
-          .slice(0, 15);
 
-        console.log(`Ranked ${allChunks.length} chunks, top sim: ${rankedChunks[0]?.similarity?.toFixed(4)}`);
+            const keywordScore = getKeywordScore(c.content, normalizedQuery, queryTerms);
+            const hybridScore = sim * 0.65 + keywordScore * 0.35;
+
+            return {
+              document_name: c.document_name,
+              chunk_index: c.chunk_index,
+              content: c.content,
+              similarity: sim,
+              keywordScore,
+              hybridScore,
+            };
+          })
+          .filter((chunk: any) => chunk.hybridScore > 0.08)
+          .sort((a: any, b: any) => b.hybridScore - a.hybridScore)
+          .slice(0, 12);
+
+        if (rankedChunks.length === 0) {
+          rankedChunks = readableChunks
+            .map((c: any) => ({
+              document_name: c.document_name,
+              chunk_index: c.chunk_index,
+              content: c.content,
+              similarity: 0,
+              keywordScore: getKeywordScore(c.content, normalizedQuery, queryTerms),
+              hybridScore: getKeywordScore(c.content, normalizedQuery, queryTerms),
+            }))
+            .filter((chunk: any) => chunk.keywordScore > 0)
+            .sort((a: any, b: any) => b.keywordScore - a.keywordScore)
+            .slice(0, 12);
+        }
+
+        console.log(`Ranked ${readableChunks.length}/${allChunks.length} readable chunks, top hybrid: ${rankedChunks[0]?.hybridScore?.toFixed(4) ?? "0.0000"}`);
       }
 
       if (rankedChunks.length > 0) {
         const contextText = rankedChunks
-          .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`)
+          .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.hybridScore * 100).toFixed(1)}%]\n${c.content}`)
           .join("\n\n---\n\n");
 
         aiMessages.push({
