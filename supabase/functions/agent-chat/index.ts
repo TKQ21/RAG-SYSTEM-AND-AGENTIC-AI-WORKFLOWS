@@ -64,12 +64,13 @@ serve(async (req) => {
 
       const queryEmbedding = simpleEmbed(userQuery);
 
-      // Use RPC for vector similarity search
+      // Use RPC for vector similarity search - pgvector expects "[0.1,0.2,...]" format
+      const embeddingStr = `[${queryEmbedding.join(",")}]`;
       const { data: matchedChunks, error: rpcError } = await supabase.rpc(
         "match_document_chunks",
         {
-          query_embedding: JSON.stringify(queryEmbedding),
-          match_threshold: 0.1,
+          query_embedding: embeddingStr,
+          match_threshold: 0.05,
           match_count: 15,
         }
       );
