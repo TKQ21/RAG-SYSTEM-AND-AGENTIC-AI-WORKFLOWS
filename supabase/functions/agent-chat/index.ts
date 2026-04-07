@@ -23,37 +23,20 @@ function simpleEmbed(text: string): number[] {
 }
 
 const SYSTEM_PROMPTS: Record<string, string> = {
-  documents: `You are an expert RAG AI assistant for Data Science Engineers, similar to NotebookLM. Users upload documents and ask questions about them.
+  documents: `You are an expert RAG AI assistant like NotebookLM. You answer questions ONLY from the document content provided below.
 
-Your behavior:
-- Answer ONLY based on the document context provided below. If the answer isn't in the documents, say "I couldn't find this information in the uploaded documents."
-- Quote relevant sections verbatim when possible, using blockquotes
-- Be precise — no hallucination, no guessing
-- For tables/structured data in documents, reproduce them as markdown tables
-- If asked about subjects, topics, paper details, exam info etc — extract them from the document content
-- Understand semantic meaning: "what subjects are there" should find subject lists even if not explicitly labeled
-- Format responses with markdown: headers, bold, bullet points, code blocks
-- Think step by step and cite which document each piece of info comes from
+Rules:
+- NEVER make up information. Only use what's in the document chunks.
+- If the answer is not in the documents, say "This information is not found in the uploaded documents."
+- Quote relevant text verbatim using blockquotes when possible
+- For structured data (tables, lists, subjects, marks), reproduce them as markdown
+- Understand semantic meaning: "what subjects" should find subject lists even if not labeled as such
+- Cite the source document name for each piece of information
+- Format with markdown: headers, bold, bullets, code blocks, tables`,
 
-IMPORTANT: You receive retrieved document chunks below. Use them as your ONLY source of truth.`,
+  datascience: `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with explanations. Use pandas, scikit-learn, PyTorch, TensorFlow etc.`,
 
-  datascience: `You are a senior Data Science & ML Engineering assistant. You help engineers with:
-- Writing Python code for data analysis, ML pipelines, feature engineering
-- Explaining algorithms and statistical concepts
-- Debugging ML code and suggesting improvements
-- Recommending best practices for model training, evaluation, deployment
-- Working with libraries like pandas, scikit-learn, PyTorch, TensorFlow, XGBoost
-
-Always provide complete, runnable code examples with explanations.`,
-
-  research: `You are an autonomous research agent for Data Science Engineers. You perform multi-step research analysis.
-
-Your behavior:
-- Break down research questions into sub-tasks
-- Provide structured reports with sections, tables, and data points
-- Compare approaches and technologies objectively
-- Include trends, statistics, and actionable recommendations
-- Format as structured research report with Executive Summary, Key Findings, Recommendations`,
+  research: `You are an autonomous research agent. Break down questions into sub-tasks, provide structured reports with Executive Summary, Key Findings, and Recommendations.`,
 };
 
 serve(async (req) => {
@@ -69,7 +52,6 @@ serve(async (req) => {
     const systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.documents;
     const userQuery = messages[messages.length - 1]?.content || "";
 
-    // Build AI messages
     const aiMessages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
     ];
@@ -82,69 +64,75 @@ serve(async (req) => {
 
       const queryEmbedding = simpleEmbed(userQuery);
 
-      // Fetch all chunks and do cosine similarity in JS (reliable, no RPC type issues)
-      const { data: allChunks, error: chunkError } = await supabase
-        .from("document_chunks")
-        .select("id, document_name, chunk_index, content, embedding")
-        .limit(500);
+      // Use RPC for vector similarity search
+      const { data: matchedChunks, error: rpcError } = await supabase.rpc(
+        "match_document_chunks",
+        {
+          query_embedding: JSON.stringify(queryEmbedding),
+          match_threshold: 0.1,
+          match_count: 15,
+        }
+      );
 
-      if (chunkError) {
-        console.error("Chunk fetch error:", JSON.stringify(chunkError));
-      }
+      if (rpcError) {
+        console.error("RPC match error:", JSON.stringify(rpcError));
+        // Fallback: fetch all chunks and rank in JS
+        const { data: allChunks } = await supabase
+          .from("document_chunks")
+          .select("id, document_name, chunk_index, content, embedding")
+          .limit(500);
 
-      let rankedChunks: any[] = [];
-      if (allChunks && allChunks.length > 0) {
-        // Compute cosine similarity for each chunk
-        rankedChunks = allChunks
-          .map((c: any) => {
-            let sim = 0;
-            if (c.embedding) {
-              // Parse embedding string from pgvector format "[0.1,0.2,...]"
-              let emb: number[];
-              try {
-                emb = typeof c.embedding === "string" ? JSON.parse(c.embedding) : c.embedding;
-              } catch {
-                emb = [];
-              }
-              if (emb.length === queryEmbedding.length) {
-                let dot = 0, magA = 0, magB = 0;
-                for (let i = 0; i < emb.length; i++) {
-                  dot += emb[i] * queryEmbedding[i];
-                  magA += emb[i] * emb[i];
-                  magB += queryEmbedding[i] * queryEmbedding[i];
+        if (allChunks && allChunks.length > 0) {
+          const ranked = allChunks
+            .map((c: any) => {
+              let sim = 0;
+              if (c.embedding) {
+                let emb: number[];
+                try {
+                  emb = typeof c.embedding === "string" ? JSON.parse(c.embedding) : c.embedding;
+                } catch { emb = []; }
+                if (emb.length === queryEmbedding.length) {
+                  let dot = 0, magA = 0, magB = 0;
+                  for (let i = 0; i < emb.length; i++) {
+                    dot += emb[i] * queryEmbedding[i];
+                    magA += emb[i] * emb[i];
+                    magB += queryEmbedding[i] * queryEmbedding[i];
+                  }
+                  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+                  sim = denom > 0 ? dot / denom : 0;
                 }
-                const denom = Math.sqrt(magA) * Math.sqrt(magB);
-                sim = denom > 0 ? dot / denom : 0;
               }
-            }
-            return { ...c, similarity: sim, embedding: undefined };
-          })
-          .sort((a: any, b: any) => b.similarity - a.similarity)
-          .slice(0, 10);
+              return { ...c, similarity: sim, embedding: undefined };
+            })
+            .sort((a: any, b: any) => b.similarity - a.similarity)
+            .slice(0, 15);
 
-        console.log(`Ranked ${allChunks.length} chunks, top similarity: ${rankedChunks[0]?.similarity?.toFixed(3)}`);
-      }
+          const contextText = ranked
+            .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`)
+            .join("\n\n---\n\n");
 
-      if (rankedChunks.length > 0) {
-        const contextText = rankedChunks
-          .map((c: any) => {
-            const sim = c.similarity != null ? ` (relevance: ${(c.similarity * 100).toFixed(1)}%)` : "";
-            return `[Source: ${c.document_name}, Chunk #${c.chunk_index}${sim}]\n${c.content}`;
-          })
+          aiMessages.push({
+            role: "system",
+            content: `Retrieved document chunks:\n\n${contextText}\n\nAnswer ONLY from these chunks. Cite the source document.`,
+          });
+          console.log(`Fallback: ${ranked.length} chunks, top sim: ${ranked[0]?.similarity?.toFixed(3)}`);
+        }
+      } else if (matchedChunks && matchedChunks.length > 0) {
+        const contextText = matchedChunks
+          .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`)
           .join("\n\n---\n\n");
 
         aiMessages.push({
           role: "system",
-          content: `Here are the most relevant document chunks retrieved via semantic search:\n\n${contextText}\n\nUse ONLY these chunks to answer the user's question. Cite the source document name.`,
+          content: `Retrieved document chunks via semantic search:\n\n${contextText}\n\nAnswer ONLY from these chunks. Cite the source document.`,
         });
-
-        console.log(`Context: ${rankedChunks.length} chunks for query "${userQuery.slice(0, 50)}..."`);
+        console.log(`RPC: ${matchedChunks.length} chunks, top sim: ${matchedChunks[0]?.similarity?.toFixed(3)}`);
       } else {
         aiMessages.push({
           role: "system",
-          content: "No documents have been uploaded yet, or no relevant chunks were found. Let the user know they should upload documents first.",
+          content: "No documents uploaded or no relevant chunks found. Tell the user to upload documents first.",
         });
-        console.log("No chunks found");
+        console.log("No chunks found for query");
       }
     }
 
@@ -159,7 +147,7 @@ serve(async (req) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "google/gemini-2.5-flash",
           messages: aiMessages,
           stream: true,
         }),
@@ -167,23 +155,11 @@ serve(async (req) => {
     );
 
     if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add credits in Settings." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
       const t = await response.text();
       console.error("AI gateway error:", response.status, t);
       return new Response(
-        JSON.stringify({ error: "AI service error" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: response.status === 429 ? "Rate limited" : response.status === 402 ? "Credits exhausted" : "AI error" }),
+        { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
