@@ -64,70 +64,56 @@ serve(async (req) => {
 
       const queryEmbedding = simpleEmbed(userQuery);
 
-      // Use RPC for vector similarity search - pgvector expects "[0.1,0.2,...]" format
-      const embeddingStr = `[${queryEmbedding.join(",")}]`;
-      const { data: matchedChunks, error: rpcError } = await supabase.rpc(
-        "match_document_chunks",
-        {
-          query_embedding: embeddingStr,
-          match_threshold: 0.05,
-          match_count: 15,
-        }
-      );
+      // Fetch all chunks and rank by cosine similarity in JS
+      const { data: allChunks, error: chunkError } = await supabase
+        .from("document_chunks")
+        .select("id, document_name, chunk_index, content, embedding")
+        .limit(1000);
 
-      if (rpcError) {
-        console.error("RPC match error:", JSON.stringify(rpcError));
-        // Fallback: fetch all chunks and rank in JS
-        const { data: allChunks } = await supabase
-          .from("document_chunks")
-          .select("id, document_name, chunk_index, content, embedding")
-          .limit(500);
+      if (chunkError) {
+        console.error("Chunk fetch error:", JSON.stringify(chunkError));
+      }
 
-        if (allChunks && allChunks.length > 0) {
-          const ranked = allChunks
-            .map((c: any) => {
-              let sim = 0;
-              if (c.embedding) {
-                let emb: number[];
-                try {
-                  emb = typeof c.embedding === "string" ? JSON.parse(c.embedding) : c.embedding;
-                } catch { emb = []; }
-                if (emb.length === queryEmbedding.length) {
-                  let dot = 0, magA = 0, magB = 0;
-                  for (let i = 0; i < emb.length; i++) {
-                    dot += emb[i] * queryEmbedding[i];
-                    magA += emb[i] * emb[i];
-                    magB += queryEmbedding[i] * queryEmbedding[i];
-                  }
-                  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-                  sim = denom > 0 ? dot / denom : 0;
+      let rankedChunks: any[] = [];
+      if (allChunks && allChunks.length > 0) {
+        rankedChunks = allChunks
+          .map((c: any) => {
+            let sim = 0;
+            if (c.embedding) {
+              let emb: number[];
+              try {
+                // pgvector returns "[0.1,0.2,...]" string
+                const raw = typeof c.embedding === "string" ? c.embedding : String(c.embedding);
+                emb = JSON.parse(raw);
+              } catch { emb = []; }
+              if (emb.length === queryEmbedding.length) {
+                let dot = 0, magA = 0, magB = 0;
+                for (let i = 0; i < emb.length; i++) {
+                  dot += emb[i] * queryEmbedding[i];
+                  magA += emb[i] * emb[i];
+                  magB += queryEmbedding[i] * queryEmbedding[i];
                 }
+                const denom = Math.sqrt(magA) * Math.sqrt(magB);
+                sim = denom > 0 ? dot / denom : 0;
               }
-              return { ...c, similarity: sim, embedding: undefined };
-            })
-            .sort((a: any, b: any) => b.similarity - a.similarity)
-            .slice(0, 15);
+            }
+            return { document_name: c.document_name, chunk_index: c.chunk_index, content: c.content, similarity: sim };
+          })
+          .sort((a: any, b: any) => b.similarity - a.similarity)
+          .slice(0, 15);
 
-          const contextText = ranked
-            .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`)
-            .join("\n\n---\n\n");
+        console.log(`Ranked ${allChunks.length} chunks, top sim: ${rankedChunks[0]?.similarity?.toFixed(4)}`);
+      }
 
-          aiMessages.push({
-            role: "system",
-            content: `Retrieved document chunks:\n\n${contextText}\n\nAnswer ONLY from these chunks. Cite the source document.`,
-          });
-          console.log(`Fallback: ${ranked.length} chunks, top sim: ${ranked[0]?.similarity?.toFixed(3)}`);
-        }
-      } else if (matchedChunks && matchedChunks.length > 0) {
-        const contextText = matchedChunks
+      if (rankedChunks.length > 0) {
+        const contextText = rankedChunks
           .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`)
           .join("\n\n---\n\n");
 
         aiMessages.push({
           role: "system",
-          content: `Retrieved document chunks via semantic search:\n\n${contextText}\n\nAnswer ONLY from these chunks. Cite the source document.`,
+          content: `Retrieved document chunks via semantic search:\n\n${contextText}\n\nAnswer ONLY from these chunks. Cite the source document name.`,
         });
-        console.log(`RPC: ${matchedChunks.length} chunks, top sim: ${matchedChunks[0]?.similarity?.toFixed(3)}`);
       } else {
         aiMessages.push({
           role: "system",
