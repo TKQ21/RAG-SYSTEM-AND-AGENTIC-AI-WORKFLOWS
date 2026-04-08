@@ -42,6 +42,9 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           <h1 className="text-xs font-black uppercase tracking-wider text-foreground">RAG System & Agentic AI Workflow</h1>
           <p className="font-mono text-[10px] font-bold text-neon-cyan" style={{ textShadow: "0 0 8px hsl(185 100% 50% / 0.5)" }}>[ NEXUS RAG ]</p>
         </div>
+        <button onClick={onOpenHistory} className="rounded-lg border border-neon-cyan/20 p-2 text-neon-cyan/70 hover:bg-neon-cyan/10 hover:text-neon-cyan transition-all" style={{ boxShadow: "0 0 8px hsl(185 100% 50% / 0.1)" }} title="Chat History">
+          <History className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Badges */}
