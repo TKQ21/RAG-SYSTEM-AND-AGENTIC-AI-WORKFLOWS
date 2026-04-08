@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Brain, Cpu, Zap, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, LogOut } from "lucide-react";
+import { Brain, Cpu, Zap, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, LogOut, History } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
@@ -28,7 +28,7 @@ interface SidebarProps {
   onOpenHistory?: () => void;
 }
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout, onOpenHistory }: SidebarProps) {
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-cyan/20 bg-sidebar overflow-hidden"
       style={{ boxShadow: "inset -1px 0 15px hsl(185 100% 50% / 0.05)" }}>
