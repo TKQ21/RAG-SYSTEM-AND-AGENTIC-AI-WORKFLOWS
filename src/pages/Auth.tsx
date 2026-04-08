@@ -39,7 +39,7 @@ export default function Auth({ onAuth }: AuthProps) {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
       {/* Animated stars background */}
       <div className="pointer-events-none absolute inset-0">
-        {Array.from({ length: 60 }).map((_, i) => (
+        {Array.from({ length: 80 }).map((_, i) => (
           <motion.div
             key={i}
             className="absolute rounded-full"
@@ -48,16 +48,16 @@ export default function Auth({ onAuth }: AuthProps) {
               height: Math.random() * 3 + 1,
               left: `${Math.random() * 100}%`,
               top: `${Math.random() * 100}%`,
-              backgroundColor: i % 3 === 0 ? "hsl(45, 100%, 70%)" : i % 3 === 1 ? "hsl(0, 0%, 100%)" : "hsl(185, 100%, 50%)",
+              backgroundColor: i % 4 === 0 ? "hsl(45, 100%, 70%)" : i % 4 === 1 ? "hsl(0, 0%, 100%)" : i % 4 === 2 ? "hsl(185, 100%, 50%)" : "hsl(270, 100%, 65%)",
             }}
             animate={{
               opacity: [0, 1, 0.3, 1, 0],
-              scale: [0.5, 1, 0.8, 1, 0.5],
+              scale: [0.5, 1.2, 0.8, 1.2, 0.5],
             }}
             transition={{
-              duration: 3 + Math.random() * 4,
+              duration: 2 + Math.random() * 3,
               repeat: Infinity,
-              delay: Math.random() * 5,
+              delay: Math.random() * 4,
             }}
           />
         ))}
@@ -93,9 +93,11 @@ export default function Auth({ onAuth }: AuthProps) {
         </div>
 
         {/* Auth card */}
-        <div
+        <motion.div
           className="rounded-xl border border-neon-cyan/30 bg-card/80 p-6 backdrop-blur-sm"
           style={{ boxShadow: "0 0 25px hsl(185 100% 50% / 0.15), inset 0 0 25px hsl(185 100% 50% / 0.05)" }}
+          whileHover={{ boxShadow: "0 0 40px hsl(185 100% 50% / 0.25), 0 0 80px hsl(270 100% 65% / 0.1), inset 0 0 25px hsl(185 100% 50% / 0.08)" }}
+          transition={{ duration: 0.3 }}
         >
           {/* Tabs */}
           <div className="mb-6 flex rounded-lg border border-border bg-secondary/50 p-1">
@@ -130,31 +132,36 @@ export default function Auth({ onAuth }: AuthProps) {
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-neon-green" style={{ textShadow: "0 0 8px hsl(150 100% 45% / 0.5)" }}>
                 Email
               </label>
-              <div
-                className="flex items-center gap-2 rounded-lg border border-neon-cyan/30 bg-secondary/50 px-3 py-2.5"
+              <motion.div
+                className="flex items-center gap-2 rounded-lg border border-neon-cyan/30 bg-secondary/80 px-3 py-2.5"
                 style={{ boxShadow: "inset 0 0 10px hsl(185 100% 50% / 0.05), 0 0 8px hsl(185 100% 50% / 0.1)" }}
+                whileFocus={{ boxShadow: "0 0 20px hsl(185 100% 50% / 0.3), inset 0 0 15px hsl(185 100% 50% / 0.1)" }}
+                whileHover={{ borderColor: "hsl(185 100% 50% / 0.5)", boxShadow: "0 0 15px hsl(185 100% 50% / 0.2), inset 0 0 10px hsl(185 100% 50% / 0.08)" }}
+                transition={{ duration: 0.2 }}
               >
-                <Mail className="h-4 w-4 text-neon-cyan/70" />
+                <Mail className="h-4 w-4 text-neon-cyan" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
                   required
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan"
                 />
-              </div>
+              </motion.div>
             </div>
 
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-neon-green" style={{ textShadow: "0 0 8px hsl(150 100% 45% / 0.5)" }}>
                 Password
               </label>
-              <div
-                className="flex items-center gap-2 rounded-lg border border-neon-cyan/30 bg-secondary/50 px-3 py-2.5"
+              <motion.div
+                className="flex items-center gap-2 rounded-lg border border-neon-cyan/30 bg-secondary/80 px-3 py-2.5"
                 style={{ boxShadow: "inset 0 0 10px hsl(185 100% 50% / 0.05), 0 0 8px hsl(185 100% 50% / 0.1)" }}
+                whileHover={{ borderColor: "hsl(185 100% 50% / 0.5)", boxShadow: "0 0 15px hsl(185 100% 50% / 0.2), inset 0 0 10px hsl(185 100% 50% / 0.08)" }}
+                transition={{ duration: 0.2 }}
               >
-                <Lock className="h-4 w-4 text-neon-cyan/70" />
+                <Lock className="h-4 w-4 text-neon-cyan" />
                 <input
                   type="password"
                   value={password}
@@ -162,15 +169,15 @@ export default function Auth({ onAuth }: AuthProps) {
                   placeholder="••••••••"
                   required
                   minLength={6}
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan"
                 />
-              </div>
+              </motion.div>
             </div>
 
             <motion.button
               type="submit"
               disabled={loading}
-              whileHover={{ scale: 1.02 }}
+              whileHover={{ scale: 1.02, boxShadow: "0 0 30px hsl(185 100% 50% / 0.5), 0 0 60px hsl(185 100% 50% / 0.3)" }}
               whileTap={{ scale: 0.98 }}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-neon-cyan py-3 text-sm font-bold text-background transition-all disabled:opacity-50"
               style={{ boxShadow: "0 0 20px hsl(185 100% 50% / 0.4), 0 0 40px hsl(185 100% 50% / 0.2)" }}
@@ -179,7 +186,7 @@ export default function Auth({ onAuth }: AuthProps) {
               {loading ? "Processing..." : isSignUp ? "Sign Up" : "Sign In"}
             </motion.button>
           </form>
-        </div>
+        </motion.div>
       </motion.div>
     </div>
   );

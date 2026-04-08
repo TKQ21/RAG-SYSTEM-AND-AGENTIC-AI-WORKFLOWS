@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Brain, Cpu, Zap, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, LogOut } from "lucide-react";
+import { Brain, Cpu, Zap, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, LogOut, History } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
@@ -25,9 +25,10 @@ interface SidebarProps {
   totalQueries: number;
   userEmail?: string;
   onLogout?: () => void;
+  onOpenHistory?: () => void;
 }
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout, onOpenHistory }: SidebarProps) {
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-cyan/20 bg-sidebar overflow-hidden"
       style={{ boxShadow: "inset -1px 0 15px hsl(185 100% 50% / 0.05)" }}>
@@ -41,6 +42,9 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           <h1 className="text-xs font-black uppercase tracking-wider text-foreground">RAG System & Agentic AI Workflow</h1>
           <p className="font-mono text-[10px] font-bold text-neon-cyan" style={{ textShadow: "0 0 8px hsl(185 100% 50% / 0.5)" }}>[ NEXUS RAG ]</p>
         </div>
+        <button onClick={onOpenHistory} className="rounded-lg border border-neon-cyan/20 p-2 text-neon-cyan/70 hover:bg-neon-cyan/10 hover:text-neon-cyan transition-all" style={{ boxShadow: "0 0 8px hsl(185 100% 50% / 0.1)" }} title="Chat History">
+          <History className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Badges */}
