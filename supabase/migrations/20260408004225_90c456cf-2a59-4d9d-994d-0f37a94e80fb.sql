@@ -1,0 +1,1 @@
+CREATE POLICY "Anyone can delete chat messages" ON public.chat_history FOR DELETE TO public USING (true);
