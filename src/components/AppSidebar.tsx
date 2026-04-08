@@ -25,6 +25,7 @@ interface SidebarProps {
   totalQueries: number;
   userEmail?: string;
   onLogout?: () => void;
+  onOpenHistory?: () => void;
 }
 
 export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout }: SidebarProps) {

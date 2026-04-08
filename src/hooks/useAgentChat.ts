@@ -196,5 +196,25 @@ export function useAgentChat() {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
   }, []);
 
-  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries };
+  const loadSession = useCallback(async (sid: string) => {
+    sessionStorage.setItem("rag_session_id", sid);
+    const { data } = await supabase
+      .from("chat_history")
+      .select("*")
+      .eq("session_id", sid)
+      .order("created_at", { ascending: true })
+      .limit(50);
+    if (data && data.length > 0) {
+      setMessages(data.map((m: any) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.message,
+        timestamp: new Date(m.created_at).getTime(),
+      })));
+    } else {
+      setMessages([]);
+    }
+  }, []);
+
+  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession };
 }
