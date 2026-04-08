@@ -1,12 +1,19 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { ChatMessage, AgentStep, AgentMode, UploadedDocument } from "@/types/agent";
 import { toast } from "sonner";
 import { extractDocumentText } from "@/lib/documentText";
+import { supabase } from "@/integrations/supabase/client";
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-chat`;
 const PROCESS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-document`;
+
+function getSessionId(): string {
+  let sid = sessionStorage.getItem("rag_session_id");
+  if (!sid) { sid = generateId() + generateId(); sessionStorage.setItem("rag_session_id", sid); }
+  return sid;
+}
 
 export function useAgentChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -14,6 +21,34 @@ export function useAgentChat() {
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [mode, setMode] = useState<AgentMode>("documents");
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
+  const [totalChunks, setTotalChunks] = useState(0);
+  const [totalQueries, setTotalQueries] = useState(0);
+  const sessionId = getSessionId();
+
+  // Load chat history on mount
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("chat_history")
+        .select("*")
+        .eq("session_id", sessionId)
+        .order("created_at", { ascending: true })
+        .limit(20);
+      if (data && data.length > 0) {
+        setMessages(data.map((m: any) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.message,
+          timestamp: new Date(m.created_at).getTime(),
+        })));
+      }
+    })();
+    // Load total chunks
+    (async () => {
+      const { count } = await supabase.from("document_chunks").select("*", { count: "exact", head: true });
+      setTotalChunks(count || 0);
+    })();
+  }, [sessionId]);
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
     const fullStep: AgentStep = { ...step, id: generateId(), timestamp: Date.now() };
@@ -22,24 +57,17 @@ export function useAgentChat() {
   }, []);
 
   const updateStep = useCallback((id: string, updates: Partial<AgentStep>) => {
-    setCurrentSteps((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
+    setCurrentSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
   }, []);
 
   const sendMessage = useCallback(async (content: string) => {
     if (isProcessing || !content.trim()) return;
 
-    const userMsg: ChatMessage = {
-      id: generateId(),
-      role: "user",
-      content: content.trim(),
-      timestamp: Date.now(),
-    };
-
+    const userMsg: ChatMessage = { id: generateId(), role: "user", content: content.trim(), timestamp: Date.now() };
     setMessages((prev) => [...prev, userMsg]);
     setIsProcessing(true);
     setCurrentSteps([]);
+    setTotalQueries((q) => q + 1);
 
     const thinkId = addStep({ type: "thinking", label: "Analyzing query intent", status: "running" });
 
@@ -53,19 +81,14 @@ export function useAgentChat() {
         updateStep(searchId, { status: "done" });
       }
 
-      const analyzeId = addStep({ type: "analyze", label: "Generating response with AI", detail: "gemini-3-flash", status: "running" });
+      const analyzeId = addStep({ type: "analyze", label: "Generating response with AI", detail: "gemini-2.5-flash", status: "running" });
 
-      const apiMessages = messages
-        .concat(userMsg)
-        .map((m) => ({ role: m.role, content: m.content }));
+      const apiMessages = messages.concat(userMsg).map((m) => ({ role: m.role, content: m.content }));
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ messages: apiMessages, mode }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        body: JSON.stringify({ messages: apiMessages, mode, sessionId }),
       });
 
       if (!resp.ok) {
@@ -91,14 +114,11 @@ export function useAgentChat() {
         while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
           let line = textBuffer.slice(0, newlineIndex);
           textBuffer = textBuffer.slice(newlineIndex + 1);
-
           if (line.endsWith("\r")) line = line.slice(0, -1);
           if (line.startsWith(":") || line.trim() === "") continue;
           if (!line.startsWith("data: ")) continue;
-
           const jsonStr = line.slice(6).trim();
           if (jsonStr === "[DONE]") { streamDone = true; break; }
-
           try {
             const parsed = JSON.parse(jsonStr);
             const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
@@ -107,21 +127,15 @@ export function useAgentChat() {
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 if (last?.role === "assistant" && last.id === "streaming") {
-                  return prev.map((m, i) =>
-                    i === prev.length - 1 ? { ...m, content: assistantContent } : m
-                  );
+                  return prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent } : m);
                 }
                 return [...prev, { id: "streaming", role: "assistant", content: assistantContent, timestamp: Date.now() }];
               });
             }
-          } catch {
-            textBuffer = line + "\n" + textBuffer;
-            break;
-          }
+          } catch { textBuffer = line + "\n" + textBuffer; break; }
         }
       }
 
-      // Flush remaining
       if (textBuffer.trim()) {
         for (let raw of textBuffer.split("\n")) {
           if (!raw) continue;
@@ -130,69 +144,36 @@ export function useAgentChat() {
           if (!raw.startsWith("data: ")) continue;
           const jsonStr = raw.slice(6).trim();
           if (jsonStr === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (delta) assistantContent += delta;
-          } catch { /* ignore */ }
+          try { const p = JSON.parse(jsonStr); const d = p.choices?.[0]?.delta?.content; if (d) assistantContent += d; } catch {}
         }
       }
 
       updateStep(resultId, { status: "done" });
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === "streaming" ? { ...m, id: generateId() } : m
-        )
-      );
+      setMessages((prev) => prev.map((m) => m.id === "streaming" ? { ...m, id: generateId() } : m));
     } catch (e) {
       console.error("Chat error:", e);
-      const errorMsg: ChatMessage = {
-        id: generateId(),
-        role: "assistant",
-        content: `⚠️ Error: ${e instanceof Error ? e.message : "Something went wrong"}. Please try again.`,
-        timestamp: Date.now(),
-      };
+      const errorMsg: ChatMessage = { id: generateId(), role: "assistant", content: `⚠️ Error: ${e instanceof Error ? e.message : "Something went wrong"}. Please try again.`, timestamp: Date.now() };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsProcessing(false);
       setCurrentSteps([]);
     }
-  }, [isProcessing, messages, mode, addStep, updateStep]);
+  }, [isProcessing, messages, mode, addStep, updateStep, sessionId]);
 
   const uploadDocument = useCallback(async (file: File) => {
     const docId = generateId();
-    const doc: UploadedDocument = {
-      id: docId,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      uploadedAt: Date.now(),
-      chunks: 0,
-    };
-
+    const doc: UploadedDocument = { id: docId, name: file.name, type: file.type, size: file.size, uploadedAt: Date.now(), chunks: 0 };
     setDocuments((prev) => [...prev, doc]);
 
     try {
-      // Extract readable text from the uploaded document
       const text = await extractDocumentText(file);
-      const truncated = text.slice(0, 100000); // 100k chars max
-
+      const truncated = text.slice(0, 100000);
       toast.info(`Processing "${file.name}"...`);
 
-      // Send to process-document edge function
       const resp = await fetch(PROCESS_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({
-          documentName: file.name,
-          documentText: truncated,
-          mimeType: file.type,
-          fileSize: file.size,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        body: JSON.stringify({ documentName: file.name, documentText: truncated, mimeType: file.type, fileSize: file.size }),
       });
 
       if (!resp.ok) {
@@ -201,18 +182,12 @@ export function useAgentChat() {
       }
 
       const result = await resp.json();
-      
-      // Update document with chunk count
-      setDocuments((prev) =>
-        prev.map((d) =>
-          d.id === docId ? { ...d, chunks: result.chunkCount } : d
-        )
-      );
-
-      toast.success(`"${file.name}" processed: ${result.chunkCount} chunks stored for semantic search`);
+      setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, chunks: result.chunkCount } : d));
+      setTotalChunks((c) => c + result.chunkCount);
+      toast.success(`"${file.name}" processed: ${result.chunkCount} chunks stored`);
     } catch (e) {
       console.error("Upload error:", e);
-      toast.error(`Failed to process "${file.name}": ${e instanceof Error ? e.message : "Unknown error"}`);
+      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
     }
   }, []);
@@ -221,15 +196,5 @@ export function useAgentChat() {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
   }, []);
 
-  return {
-    messages,
-    isProcessing,
-    currentSteps,
-    mode,
-    setMode,
-    documents,
-    sendMessage,
-    uploadDocument,
-    removeDocument,
-  };
+  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries };
 }
