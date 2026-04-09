@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { ChatMessage, AgentStep, AgentMode, UploadedDocument } from "@/types/agent";
 import { toast } from "sonner";
-import { extractDocumentText } from "@/lib/documentText";
+import { extractDocumentWithImages } from "@/lib/documentText";
 import { supabase } from "@/integrations/supabase/client";
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
@@ -166,14 +166,26 @@ export function useAgentChat() {
     setDocuments((prev) => [...prev, doc]);
 
     try {
-      const text = await extractDocumentText(file);
+      const { text, pageImages, isImageHeavy } = await extractDocumentWithImages(file);
       const truncated = text.slice(0, 100000);
-      toast.info(`Processing "${file.name}"...`);
+      toast.info(`Processing "${file.name}"${isImageHeavy ? " with AI Vision..." : "..."}`);
+
+      const body: any = {
+        documentName: file.name,
+        documentText: truncated,
+        mimeType: file.type,
+        fileSize: file.size,
+      };
+
+      // Send page images for vision extraction (limit to 10 pages to keep payload reasonable)
+      if (pageImages.length > 0) {
+        body.pageImages = pageImages.slice(0, 10);
+      }
 
       const resp = await fetch(PROCESS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-        body: JSON.stringify({ documentName: file.name, documentText: truncated, mimeType: file.type, fileSize: file.size }),
+        body: JSON.stringify(body),
       });
 
       if (!resp.ok) {
