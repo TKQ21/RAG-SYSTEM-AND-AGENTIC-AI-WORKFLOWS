@@ -7,26 +7,41 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Simple deterministic embedding - must match agent-chat exactly
-function simpleEmbed(text: string): number[] {
+// TF-IDF style embedding - must match agent-chat exactly
+function betterEmbed(text: string): number[] {
   const vec = new Array(384).fill(0);
-  const lower = text.toLowerCase();
-  for (let i = 0; i < lower.length; i++) {
-    vec[i % 384] += lower.charCodeAt(i) / 1000;
+  const words = text.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  const wordCount: Record<string, number> = {};
+  for (const w of words) {
+    wordCount[w] = (wordCount[w] || 0) + 1;
   }
-  for (let i = 0; i < lower.length - 1; i++) {
-    const bigram = lower.charCodeAt(i) * 31 + lower.charCodeAt(i + 1);
-    vec[(bigram) % 384] += 0.5 / 1000;
+
+  for (const [word, count] of Object.entries(wordCount)) {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash = ((hash << 5) - hash) + word.charCodeAt(i);
+      hash = hash & hash;
+    }
+    const idx = Math.abs(hash) % 384;
+    vec[idx] += count * Math.log(1 + count);
+
+    // bigram context
+    const idx2 = (Math.abs(hash * 31)) % 384;
+    vec[idx2] += count * 0.5;
   }
+
   const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
   return vec.map(v => v / mag);
 }
 
-// Sanitize text: remove null bytes and other problematic characters
 function sanitizeText(text: string): string {
   return text
-    .replace(/\u0000/g, "")        // Remove null bytes
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ") // Replace control chars with space
+    .replace(/\u0000/g, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
     .replace(/\r\n?/g, "\n")
     .replace(/[^\S\n]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
@@ -40,32 +55,55 @@ function hasMeaningfulText(text: string): boolean {
   return readable >= 20 && replacementChars <= sample.length * 0.1;
 }
 
-// Chunk text into overlapping segments
-function chunkText(text: string, chunkSize = 800, overlap = 200): string[] {
-  const chunks: string[] = [];
-  const sentences = text.split(/(?<=[.!?\n])\s+/);
-  let current = "";
+// Smart chunking with paragraph awareness and metadata
+function smartChunk(text: string): { content: string; lineStart: number; lineEnd: number }[] {
+  const chunks: { content: string; lineStart: number; lineEnd: number }[] = [];
+  const lines = text.split("\n");
+  const paragraphs: { text: string; lineStart: number; lineEnd: number }[] = [];
 
-  for (const sentence of sentences) {
-    if (current.length + sentence.length > chunkSize && current.length > 0) {
-      chunks.push(current.trim());
-      const words = current.split(/\s+/);
-      const overlapWords = words.slice(-Math.floor(overlap / 5));
-      current = overlapWords.join(" ") + " " + sentence;
+  // Build paragraphs with line tracking
+  let currentPara = "";
+  let paraStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      if (currentPara.trim()) {
+        paragraphs.push({ text: currentPara.trim(), lineStart: paraStart, lineEnd: i - 1 });
+      }
+      currentPara = "";
+      paraStart = i + 1;
     } else {
-      current += (current ? " " : "") + sentence;
+      if (!currentPara) paraStart = i;
+      currentPara += (currentPara ? " " : "") + line;
     }
   }
-  if (current.trim()) chunks.push(current.trim());
-
-  // Fallback: chunk by character count
-  if (chunks.length === 0 && text.trim().length > 0) {
-    for (let i = 0; i < text.length; i += chunkSize - overlap) {
-      chunks.push(text.slice(i, i + chunkSize).trim());
-    }
+  if (currentPara.trim()) {
+    paragraphs.push({ text: currentPara.trim(), lineStart: paraStart, lineEnd: lines.length - 1 });
   }
 
-  return chunks.filter(c => c.length > 20);
+  // Merge paragraphs into 500-char chunks with 100-char overlap
+  let current = "";
+  let chunkLineStart = paragraphs[0]?.lineStart ?? 0;
+  let chunkLineEnd = 0;
+
+  for (const para of paragraphs) {
+    if (current.length + para.text.length > 500 && current) {
+      chunks.push({ content: current.trim(), lineStart: chunkLineStart, lineEnd: chunkLineEnd });
+      // Keep last 100 chars as overlap
+      const overlap = current.slice(-100);
+      current = overlap + " " + para.text;
+      chunkLineStart = Math.max(0, chunkLineEnd - 2);
+      chunkLineEnd = para.lineEnd;
+    } else {
+      current = (current + " " + para.text).trim();
+      chunkLineEnd = para.lineEnd;
+    }
+  }
+  if (current.trim()) {
+    chunks.push({ content: current.trim(), lineStart: chunkLineStart, lineEnd: chunkLineEnd });
+  }
+
+  return chunks.filter(c => c.content.length > 30);
 }
 
 serve(async (req) => {
@@ -83,7 +121,6 @@ serve(async (req) => {
       );
     }
 
-    // Sanitize the entire text first to remove null bytes
     const cleanText = sanitizeText(documentText);
 
     if (!hasMeaningfulText(cleanText)) {
@@ -117,21 +154,20 @@ serve(async (req) => {
 
     const documentId = doc.id;
 
-    // 2. Chunk the sanitized text
-    const chunks = chunkText(cleanText);
+    // 2. Smart chunk with metadata
+    const chunks = smartChunk(cleanText);
     console.log(`Document "${documentName}": ${chunks.length} chunks from ${cleanText.length} chars`);
 
-    // 3. Generate embeddings and insert chunks in batches
+    // 3. Generate TF-IDF embeddings and insert chunks in batches
     for (let i = 0; i < chunks.length; i += 20) {
-      const batch = chunks.slice(i, i + 20).map((content, idx) => {
-        const sanitizedChunk = sanitizeText(content);
-
+      const batch = chunks.slice(i, i + 20).map((chunk, idx) => {
+        const sanitizedChunk = sanitizeText(chunk.content);
         return {
           document_id: documentId,
           document_name: documentName,
           chunk_index: i + idx,
           content: sanitizedChunk,
-          embedding: JSON.stringify(simpleEmbed(sanitizedChunk)),
+          embedding: JSON.stringify(betterEmbed(sanitizedChunk)),
         };
       });
 

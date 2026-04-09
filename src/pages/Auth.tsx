@@ -146,7 +146,8 @@ export default function Auth({ onAuth }: AuthProps) {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
                   required
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan"
+                  autoComplete="off"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:hsl(0_0%_95%)] [&:-webkit-autofill:hover]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset] [&:-webkit-autofill:focus]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset]"
                 />
               </motion.div>
             </div>
@@ -169,7 +170,8 @@ export default function Auth({ onAuth }: AuthProps) {
                   placeholder="••••••••"
                   required
                   minLength={6}
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan"
+                  autoComplete="off"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none caret-neon-cyan [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:hsl(0_0%_95%)] [&:-webkit-autofill:hover]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset] [&:-webkit-autofill:focus]:[-webkit-box-shadow:0_0_0_1000px_hsl(220_20%_12%)_inset]"
                 />
               </motion.div>
             </div>
