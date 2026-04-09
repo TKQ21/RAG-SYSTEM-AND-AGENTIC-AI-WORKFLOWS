@@ -95,7 +95,7 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         const ctx = canvas.getContext("2d")!;
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
         // Convert to JPEG base64 (smaller than PNG)
         const imageData = canvas.toDataURL("image/jpeg", 0.85);
         const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
