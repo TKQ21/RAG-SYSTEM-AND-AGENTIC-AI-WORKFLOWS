@@ -7,16 +7,32 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function simpleEmbed(text: string): number[] {
+// TF-IDF style embedding - must match process-document exactly
+function betterEmbed(text: string): number[] {
   const vec = new Array(384).fill(0);
-  const lower = text.toLowerCase();
-  for (let i = 0; i < lower.length; i++) {
-    vec[i % 384] += lower.charCodeAt(i) / 1000;
+  const words = text.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  const wordCount: Record<string, number> = {};
+  for (const w of words) {
+    wordCount[w] = (wordCount[w] || 0) + 1;
   }
-  for (let i = 0; i < lower.length - 1; i++) {
-    const bigram = lower.charCodeAt(i) * 31 + lower.charCodeAt(i + 1);
-    vec[(bigram) % 384] += 0.5 / 1000;
+
+  for (const [word, count] of Object.entries(wordCount)) {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash = ((hash << 5) - hash) + word.charCodeAt(i);
+      hash = hash & hash;
+    }
+    const idx = Math.abs(hash) % 384;
+    vec[idx] += count * Math.log(1 + count);
+
+    const idx2 = (Math.abs(hash * 31)) % 384;
+    vec[idx2] += count * 0.5;
   }
+
   const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
   return vec.map(v => v / mag);
 }
@@ -40,6 +56,8 @@ const SEARCH_SYNONYMS: Record<string, string[]> = {
   marks: ["marks", "score", "result", "grade"],
   center: ["center", "centre", "venue", "location"],
   centre: ["center", "centre", "venue", "location"],
+  salary: ["salary", "income", "pay", "wage", "compensation", "earning"],
+  age: ["age", "age group", "years", "old"],
 };
 
 function normalizeForSearch(text: string): string {
@@ -55,12 +73,6 @@ function expandQueryTerms(query: string): string[] {
   const terms = new Set<string>(tokenize(normalizedQuery));
   for (const token of Array.from(terms)) {
     for (const synonym of SEARCH_SYNONYMS[token] ?? []) terms.add(synonym);
-  }
-  if (normalizedQuery.includes("paper details")) {
-    ["subject", "subjects", "paper", "papers", "course", "date", "session", "code"].forEach((t) => terms.add(t));
-  }
-  if (normalizedQuery.includes("what subject") || normalizedQuery.includes("which subject")) {
-    ["subject", "subjects", "paper", "papers", "course", "course code", "subject code"].forEach((t) => terms.add(t));
   }
   return Array.from(terms);
 }
@@ -92,20 +104,19 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 const SYSTEM_PROMPTS: Record<string, string> = {
-  documents: `You are a strict document assistant.
+  documents: `You are a strict document QA system.
+ONLY answer from the exact [Context] given.
+If context has '40-50 age group' data, answer that.
+If context has '60-70 age group' data, answer that.
+NEVER mix data from different sections.
+NEVER guess or hallucinate.
+If exact data not found: say 'Not in document.'
+Be specific and accurate.
+Always cite: [Source: filename, Chunk #idx]`,
 
-RULES:
-1. Answer ONLY from the [Context] provided.
-2. If exact answer is NOT in context, say: 'This specific information is not in the document.'
-3. NEVER guess, estimate, or use outside knowledge.
-4. NEVER use data from one section to answer about a different section.
-5. If user asks about '40-50 age group', only answer if context contains EXACT 40-50 data. Do not substitute with similar data.
-6. Short answers only — 2-3 sentences max.
-7. Always cite the source: [Source: filename, Chunk #idx]`,
+  datascience: `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with explanations.`,
 
-  datascience: `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with explanations. Use pandas, scikit-learn, PyTorch, TensorFlow etc.`,
-
-  research: `You are an autonomous research agent. Break down questions into sub-tasks, provide structured reports with Executive Summary, Key Findings, and Recommendations.`,
+  research: `You are an autonomous research agent. Break down questions into sub-tasks, provide structured reports.`,
 };
 
 serve(async (req) => {
@@ -125,7 +136,7 @@ serve(async (req) => {
     const systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.documents;
     const userQuery = messages[messages.length - 1]?.content || "";
 
-    // Save user message to chat_history
+    // Save user message
     if (sessionId && userQuery) {
       await supabase.from("chat_history").insert({
         session_id: sessionId,
@@ -139,7 +150,7 @@ serve(async (req) => {
     ];
 
     if (mode === "documents" && userQuery) {
-      const queryEmbedding = simpleEmbed(userQuery);
+      const queryEmbedding = betterEmbed(userQuery);
       const normalizedQuery = normalizeForSearch(userQuery);
       const queryTerms = expandQueryTerms(userQuery);
 
@@ -170,13 +181,14 @@ serve(async (req) => {
               if (emb.length === queryEmbedding.length) sim = cosineSimilarity(emb, queryEmbedding);
             }
             const keywordScore = getKeywordScore(c.content, normalizedQuery, queryTerms);
-            const hybridScore = sim * 0.65 + keywordScore * 0.35;
+            const hybridScore = sim * 0.55 + keywordScore * 0.45;
             return { document_name: c.document_name, chunk_index: c.chunk_index, content: c.content, similarity: sim, keywordScore, hybridScore };
           })
-          .filter((c: any) => c.hybridScore > 0.08)
+          .filter((c: any) => c.hybridScore > 0.05)
           .sort((a: any, b: any) => b.hybridScore - a.hybridScore)
-          .slice(0, 10);
+          .slice(0, 12);
 
+        // Fallback to pure keyword
         if (rankedChunks.length === 0) {
           rankedChunks = readableChunks
             .map((c: any) => ({
@@ -186,17 +198,17 @@ serve(async (req) => {
             }))
             .filter((c: any) => c.keywordScore > 0)
             .sort((a: any, b: any) => b.keywordScore - a.keywordScore)
-            .slice(0, 10);
+            .slice(0, 12);
         }
 
-        console.log(`Ranked ${readableChunks.length}/${allChunks.length} readable chunks, top: ${rankedChunks[0]?.hybridScore?.toFixed(4) ?? "0"}`);
+        console.log(`Ranked ${readableChunks.length}/${allChunks.length} readable, top ${rankedChunks.length} chunks, best: ${rankedChunks[0]?.hybridScore?.toFixed(4) ?? "0"}`);
       }
 
       if (rankedChunks.length > 0) {
         const contextText = rankedChunks
           .map((c: any) => `[Source: ${c.document_name}, Chunk #${c.chunk_index}, Relevance: ${(c.hybridScore * 100).toFixed(1)}%]\n${c.content}`)
           .join("\n\n---\n\n");
-        aiMessages.push({ role: "system", content: `[Context]\n\n${contextText}\n\nAnswer ONLY from the context above. Cite source.` });
+        aiMessages.push({ role: "system", content: `[Context]\n\n${contextText}\n\nAnswer ONLY from the context above. Cite source with chunk number.` });
       } else {
         aiMessages.push({ role: "system", content: "No documents uploaded or no relevant chunks found. Tell the user to upload documents first." });
       }
@@ -219,11 +231,8 @@ serve(async (req) => {
       );
     }
 
-    // We need to capture the streamed response to save to chat_history
-    // Clone the response body so we can both stream it and read it
     const [stream1, stream2] = response.body!.tee();
 
-    // Background: read stream2 to capture full response for saving
     if (sessionId) {
       (async () => {
         try {
