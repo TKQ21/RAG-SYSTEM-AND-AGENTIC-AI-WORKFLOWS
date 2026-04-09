@@ -60,7 +60,12 @@ function mergePdfItems(items: unknown[]): string {
   return lines.join("\n");
 }
 
-async function extractPdfText(file: File): Promise<string> {
+export interface PdfExtractionResult {
+  text: string;
+  pageImages: string[]; // base64 JPEG images of each page
+}
+
+async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
   const data = new Uint8Array(await file.arrayBuffer());
   const loadingTask = getDocument({
     data,
@@ -72,16 +77,41 @@ async function extractPdfText(file: File): Promise<string> {
 
   try {
     const pages: string[] = [];
+    const pageImages: string[] = [];
+    const maxPages = Math.min(pdf.numPages, 30); // Cap at 30 pages for vision
 
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
+
+      // Extract text
       const textContent = await page.getTextContent();
       const pageText = mergePdfItems(textContent.items);
       if (pageText) pages.push(pageText);
+
+      // Render page to canvas for vision extraction
+      try {
+        const viewport = page.getViewport({ scale: 1.5 }); // Good quality for OCR
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d")!;
+        await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+        // Convert to JPEG base64 (smaller than PNG)
+        const imageData = canvas.toDataURL("image/jpeg", 0.85);
+        const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
+        pageImages.push(base64Only);
+        canvas.remove();
+      } catch (renderErr) {
+        console.warn(`Failed to render page ${pageNumber} to image:`, renderErr);
+      }
+
       page.cleanup();
     }
 
-    return normalizeExtractedText(pages.join("\n\n"));
+    return {
+      text: normalizeExtractedText(pages.join("\n\n")),
+      pageImages,
+    };
   } finally {
     void pdf.destroy();
   }
@@ -97,7 +127,8 @@ export async function extractDocumentText(file: File): Promise<string> {
   let extractedText = "";
 
   if (file.type === "application/pdf" || extension === "pdf") {
-    extractedText = await extractPdfText(file);
+    const result = await extractPdfWithImages(file);
+    extractedText = result.text;
   } else {
     extractedText = normalizeExtractedText(await file.text());
   }
@@ -107,4 +138,31 @@ export async function extractDocumentText(file: File): Promise<string> {
   }
 
   return extractedText;
+}
+
+/**
+ * Extract text + page images from PDF for vision-based processing
+ */
+export async function extractDocumentWithImages(file: File): Promise<{
+  text: string;
+  pageImages: string[];
+  isImageHeavy: boolean;
+}> {
+  const extension = getFileExtension(file.name);
+
+  if (file.type === "application/pdf" || extension === "pdf") {
+    const result = await extractPdfWithImages(file);
+    // Determine if PDF is image-heavy (little text extracted relative to pages)
+    const avgTextPerPage = result.text.length / Math.max(result.pageImages.length, 1);
+    const isImageHeavy = avgTextPerPage < 100 || result.pageImages.length > 0;
+    return {
+      text: result.text,
+      pageImages: result.pageImages,
+      isImageHeavy,
+    };
+  }
+
+  // Non-PDF files
+  const text = normalizeExtractedText(await file.text());
+  return { text, pageImages: [], isImageHeavy: false };
 }
