@@ -7,33 +7,47 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// TF-IDF style embedding - must match agent-chat exactly
+/** Normalize ranges for better embedding: "41-50" → "41 to 50 age group" */
+function normalizeRanges(text: string): string {
+  return text.replace(/(\d+)\s*[-–—]\s*(\d+)/g, "$1 to $2 age group");
+}
+
+/** TF-IDF style 384-dim embedding with range normalization + bigrams */
 function betterEmbed(text: string): number[] {
   const vec = new Array(384).fill(0);
-  const words = text.toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
+  const normalized = normalizeRanges(text.toLowerCase());
+  const words = normalized
+    .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
-    .filter(w => w.length > 2);
+    .filter((w) => w.length > 2);
 
   const wordCount: Record<string, number> = {};
-  for (const w of words) {
-    wordCount[w] = (wordCount[w] || 0) + 1;
+  for (const w of words) wordCount[w] = (wordCount[w] || 0) + 1;
+
+  // Unigrams
+  for (const [word, count] of Object.entries(wordCount)) {
+    let h = 0;
+    for (let i = 0; i < word.length; i++) {
+      h = ((h << 5) - h) + word.charCodeAt(i);
+      h = h & h;
+    }
+    vec[Math.abs(h) % 384] += count * Math.log(1 + count);
+    vec[(Math.abs(h * 31)) % 384] += count * 0.5;
   }
 
-  for (const [word, count] of Object.entries(wordCount)) {
-    let hash = 0;
-    for (let i = 0; i < word.length; i++) {
-      hash = ((hash << 5) - hash) + word.charCodeAt(i);
-      hash = hash & hash;
+  // Bigrams for context
+  for (let i = 0; i < words.length - 1; i++) {
+    const bigram = words[i] + "_" + words[i + 1];
+    let h = 0;
+    for (let j = 0; j < bigram.length; j++) {
+      h = ((h << 5) - h) + bigram.charCodeAt(j);
+      h = h & h;
     }
-    const idx = Math.abs(hash) % 384;
-    vec[idx] += count * Math.log(1 + count);
-    const idx2 = (Math.abs(hash * 31)) % 384;
-    vec[idx2] += count * 0.5;
+    vec[Math.abs(h) % 384] += 0.3;
   }
 
   const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return vec.map(v => v / mag);
+  return vec.map((v) => v / mag);
 }
 
 function sanitizeText(text: string): string {
@@ -53,56 +67,68 @@ function hasMeaningfulText(text: string): boolean {
   return readable >= 20 && replacementChars <= sample.length * 0.1;
 }
 
-function smartChunk(text: string): { content: string; lineStart: number; lineEnd: number }[] {
-  const chunks: { content: string; lineStart: number; lineEnd: number }[] = [];
+/** Data-aware chunking: 200 chars, force split on data boundaries */
+function smartChunk(text: string): { content: string; lineStart: number; lineEnd: number; pageNum: number }[] {
+  const CHUNK_SIZE = 200;
+  const chunks: { content: string; lineStart: number; lineEnd: number; pageNum: number }[] = [];
   const lines = text.split("\n");
-  const paragraphs: { text: string; lineStart: number; lineEnd: number }[] = [];
+  let currentPage = 1;
 
-  let currentPara = "";
-  let paraStart = 0;
+  let buffer = "";
+  let bufferStart = 0;
+  let bufferEnd = 0;
+  let bufferPage = 1;
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line) {
-      if (currentPara.trim()) {
-        paragraphs.push({ text: currentPara.trim(), lineStart: paraStart, lineEnd: i - 1 });
+    if (!line) continue;
+
+    // Detect page markers
+    const pageMatch = line.match(/^\[?Page\s*(\d+)\]?/i);
+    if (pageMatch) {
+      currentPage = parseInt(pageMatch[1]);
+      continue;
+    }
+
+    // Is this a data line that should force a chunk boundary?
+    const isDataLine =
+      /:/.test(line) ||                          // Key: Value
+      /\d+[\.\-–]\d+/.test(line) ||              // Ranges like 41-50
+      /\d+\s*%/.test(line) ||                    // Percentages
+      /\|/.test(line) ||                          // Table rows
+      /^\s*[-•]\s/.test(line);                    // Bullet points
+
+    if (isDataLine && buffer.length > 50) {
+      // Save current buffer, start new chunk
+      chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
+      buffer = line + " ";
+      bufferStart = i;
+      bufferEnd = i;
+      bufferPage = currentPage;
+    } else if (buffer.length + line.length > CHUNK_SIZE && buffer.length > 30) {
+      chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
+      buffer = line + " ";
+      bufferStart = i;
+      bufferEnd = i;
+      bufferPage = currentPage;
+    } else {
+      if (!buffer) {
+        bufferStart = i;
+        bufferPage = currentPage;
       }
-      currentPara = "";
-      paraStart = i + 1;
-    } else {
-      if (!currentPara) paraStart = i;
-      currentPara += (currentPara ? " " : "") + line;
+      buffer += (buffer ? " " : "") + line;
+      bufferEnd = i;
     }
   }
-  if (currentPara.trim()) {
-    paragraphs.push({ text: currentPara.trim(), lineStart: paraStart, lineEnd: lines.length - 1 });
+
+  if (buffer.trim().length > 20) {
+    chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
   }
 
-  let current = "";
-  let chunkLineStart = paragraphs[0]?.lineStart ?? 0;
-  let chunkLineEnd = 0;
-
-  for (const para of paragraphs) {
-    if (current.length + para.text.length > 500 && current) {
-      chunks.push({ content: current.trim(), lineStart: chunkLineStart, lineEnd: chunkLineEnd });
-      const overlap = current.slice(-100);
-      current = overlap + " " + para.text;
-      chunkLineStart = Math.max(0, chunkLineEnd - 2);
-      chunkLineEnd = para.lineEnd;
-    } else {
-      current = (current + " " + para.text).trim();
-      chunkLineEnd = para.lineEnd;
-    }
-  }
-  if (current.trim()) {
-    chunks.push({ content: current.trim(), lineStart: chunkLineStart, lineEnd: chunkLineEnd });
-  }
-
-  return chunks.filter(c => c.content.length > 30);
+  return chunks;
 }
 
-/**
- * Use Lovable AI Gateway with Gemini Vision to extract text from PDF page images
- */
+/** Use Lovable AI Gateway with Gemini Vision for image-heavy PDFs */
 async function extractTextFromImages(
   pageImages: string[],
   apiKey: string,
@@ -110,18 +136,15 @@ async function extractTextFromImages(
 ): Promise<string> {
   const extractedPages: string[] = [];
 
-  // Process pages in batches of 3 to avoid token limits
   for (let i = 0; i < pageImages.length; i += 3) {
     const batch = pageImages.slice(i, i + 3);
     const pageNumbers = batch.map((_, idx) => i + idx + 1);
 
     const contentParts: any[] = [];
-    for (let j = 0; j < batch.length; j++) {
+    for (const img of batch) {
       contentParts.push({
         type: "image_url",
-        image_url: {
-          url: `data:image/jpeg;base64,${batch[j]}`,
-        },
+        image_url: { url: `data:image/jpeg;base64,${img}` },
       });
     }
     contentParts.push({
@@ -131,51 +154,39 @@ async function extractTextFromImages(
 For EACH page extract:
 - All visible text exactly as written
 - All numbers, percentages, and metrics
-- All chart/graph values and labels
+- All chart/graph values and labels  
 - All table rows and columns (preserve structure)
 - All KPIs, dashboard metrics, and indicators
-- All headings, titles, and captions
 
 Format as:
 [Page X]
 (extracted content here)
 
-Extract EVERYTHING. Miss nothing. Keep original formatting.`,
+Extract EVERYTHING. Miss nothing.`,
     });
 
     try {
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "google/gemini-2.5-flash",
-          messages: [
-            {
-              role: "user",
-              content: contentParts,
-            },
-          ],
+          messages: [{ role: "user", content: contentParts }],
           max_tokens: 8000,
         }),
       });
 
       if (!response.ok) {
-        const errText = await response.text();
-        console.error(`Vision extraction failed for pages ${pageNumbers.join(",")}: ${response.status} ${errText}`);
+        console.error(`Vision failed pages ${pageNumbers.join(",")}: ${response.status}`);
         continue;
       }
 
       const data = await response.json();
-      const extractedText = data.choices?.[0]?.message?.content || "";
-      if (extractedText) {
-        extractedPages.push(extractedText);
-      }
-      console.log(`✅ Vision extracted pages ${pageNumbers.join(",")}: ${extractedText.length} chars`);
+      const extracted = data.choices?.[0]?.message?.content || "";
+      if (extracted) extractedPages.push(extracted);
+      console.log(`✅ Vision pages ${pageNumbers.join(",")}: ${extracted.length} chars`);
     } catch (err) {
-      console.error(`Vision extraction error for pages ${pageNumbers.join(",")}:`, err);
+      console.error(`Vision error pages ${pageNumbers.join(",")}:`, err);
     }
   }
 
@@ -183,18 +194,15 @@ Extract EVERYTHING. Miss nothing. Keep original formatting.`,
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const { documentName, documentText, mimeType, fileSize, pageImages } = await req.json();
 
     if (!documentName) {
-      return new Response(
-        JSON.stringify({ error: "documentName is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "documentName is required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -204,95 +212,66 @@ serve(async (req) => {
 
     let fullText = "";
 
-    // Step 1: Use Vision AI to extract text from page images (if available)
+    // Vision AI extraction for image-heavy PDFs
     if (pageImages && Array.isArray(pageImages) && pageImages.length > 0 && LOVABLE_API_KEY) {
-      console.log(`🔍 Running Vision extraction on ${pageImages.length} page images...`);
+      console.log(`🔍 Vision extraction on ${pageImages.length} pages...`);
       const visionText = await extractTextFromImages(pageImages, LOVABLE_API_KEY, documentName);
-      if (visionText) {
-        fullText += visionText + "\n\n";
-        console.log(`Vision extracted ${visionText.length} chars`);
-      }
+      if (visionText) fullText += visionText + "\n\n";
     }
 
-    // Step 2: Also use the pdfjs-extracted text
+    // Standard text extraction
     if (documentText) {
       const cleanPdfText = sanitizeText(documentText);
-      if (hasMeaningfulText(cleanPdfText)) {
-        fullText += cleanPdfText;
-      }
+      if (hasMeaningfulText(cleanPdfText)) fullText += cleanPdfText;
     }
 
     fullText = sanitizeText(fullText);
 
     if (!fullText || fullText.length < 20) {
       return new Response(
-        JSON.stringify({ error: "Could not extract any readable text. Please upload a text-based or image-based PDF/TXT/DOCX file." }),
+        JSON.stringify({ error: "Could not extract any readable text." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 1. Insert document metadata
+    // Insert document record
     const { data: doc, error: docError } = await supabase
       .from("documents")
-      .insert({
-        name: documentName,
-        size: fileSize || fullText.length,
-        mime_type: mimeType || "text/plain",
-        status: "processing",
-        chunk_count: 0,
-      })
+      .insert({ name: documentName, size: fileSize || fullText.length, mime_type: mimeType || "text/plain", status: "processing", chunk_count: 0 })
       .select("id")
       .single();
 
-    if (docError) {
-      console.error("Doc insert error:", docError);
-      throw new Error(`Failed to create document record: ${docError.message}`);
-    }
-
+    if (docError) throw new Error(`Failed to create document: ${docError.message}`);
     const documentId = doc.id;
 
-    // 2. Smart chunk with metadata
+    // Smart chunk with data-aware boundaries
     const chunks = smartChunk(fullText);
-    console.log(`Document "${documentName}": ${chunks.length} chunks from ${fullText.length} chars`);
+    console.log(`"${documentName}": ${chunks.length} chunks from ${fullText.length} chars`);
 
-    // 3. Generate embeddings and insert chunks in batches
+    // Embed and insert in batches
     for (let i = 0; i < chunks.length; i += 20) {
       const batch = chunks.slice(i, i + 20).map((chunk, idx) => {
-        const sanitizedChunk = sanitizeText(chunk.content);
+        const sanitized = sanitizeText(chunk.content);
         return {
           document_id: documentId,
           document_name: documentName,
           chunk_index: i + idx,
-          content: sanitizedChunk,
-          embedding: JSON.stringify(betterEmbed(sanitizedChunk)),
+          content: sanitized,
+          embedding: JSON.stringify(betterEmbed(sanitized)),
         };
       });
 
       const { error: chunkError } = await supabase.from("document_chunks").insert(batch);
-
-      if (chunkError) {
-        console.error(`Chunk insert error (batch ${i}):`, JSON.stringify(chunkError));
-        throw new Error(`Failed to insert chunks: ${chunkError.message}`);
-      }
+      if (chunkError) throw new Error(`Chunk insert failed: ${chunkError.message}`);
       console.log(`Inserted batch ${i}-${i + batch.length - 1}`);
     }
 
-    // 4. Update document status
-    await supabase
-      .from("documents")
-      .update({ status: "ready", chunk_count: chunks.length })
-      .eq("id", documentId);
-
-    console.log(`✅ Document "${documentName}" processed: ${chunks.length} chunks stored (vision: ${pageImages?.length || 0} pages)`);
+    // Update document status
+    await supabase.from("documents").update({ status: "ready", chunk_count: chunks.length }).eq("id", documentId);
+    console.log(`✅ "${documentName}" done: ${chunks.length} chunks (vision: ${pageImages?.length || 0} pages)`);
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        documentId,
-        chunkCount: chunks.length,
-        documentName,
-        visionPages: pageImages?.length || 0,
-      }),
+      JSON.stringify({ success: true, documentId, chunkCount: chunks.length, documentName, visionPages: pageImages?.length || 0 }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
