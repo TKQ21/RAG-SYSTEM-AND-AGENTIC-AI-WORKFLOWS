@@ -7,42 +7,37 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ── Must match process-document exactly ──
-function normalizeRanges(text: string): string {
-  return text.replace(/(\d+)\s*[-–—]\s*(\d+)/g, "$1 to $2 age group");
-}
-
-function betterEmbed(text: string): number[] {
-  const vec = new Array(384).fill(0);
-  const normalized = normalizeRanges(text.toLowerCase());
-  const words = normalized.replace(/[^\w\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
-
-  const wordCount: Record<string, number> = {};
-  for (const w of words) wordCount[w] = (wordCount[w] || 0) + 1;
-
-  for (const [word, count] of Object.entries(wordCount)) {
-    let h = 0;
-    for (let i = 0; i < word.length; i++) { h = ((h << 5) - h) + word.charCodeAt(i); h = h & h; }
-    vec[Math.abs(h) % 384] += count * Math.log(1 + count);
-    vec[(Math.abs(h * 31)) % 384] += count * 0.5;
+// ── Gemini Embedding (768-dim) — must match process-document ──
+async function getGeminiEmbedding(text: string, apiKey: string): Promise<number[]> {
+  const truncated = text.slice(0, 2000);
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "models/text-embedding-004",
+        content: { parts: [{ text: truncated }] },
+      }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini embedding failed (${res.status}): ${err}`);
   }
-
-  for (let i = 0; i < words.length - 1; i++) {
-    const bigram = words[i] + "_" + words[i + 1];
-    let h = 0;
-    for (let j = 0; j < bigram.length; j++) { h = ((h << 5) - h) + bigram.charCodeAt(j); h = h & h; }
-    vec[Math.abs(h) % 384] += 0.3;
-  }
-
-  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return vec.map((v) => v / mag);
+  const data = await res.json();
+  return data.embedding.values;
 }
 
 // ── Hindi filler removal ──
-const HINDI_FILLERS = /\b(ka|ki|ke|mai|mein|kitni|kitna|kya|hai|toh|aur|se|ko|ne|par|pe|ho|hain|tha|thi|the|bhi|nahi|nhi|karo|karo|batao|bata|dikhao)\b/gi;
+const HINDI_FILLERS = /\b(ka|ki|ke|mai|mein|kitni|kitna|kya|hai|toh|aur|se|ko|ne|par|pe|ho|hain|tha|thi|the|bhi|nahi|nhi|karo|batao|bata|dikhao)\b/gi;
 
 function removeHindiFillers(q: string): string {
   return q.replace(HINDI_FILLERS, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeRanges(text: string): string {
+  return text.replace(/(\d+)\s*[-–—]\s*(\d+)/g, "$1 to $2 age group");
 }
 
 // ── Multi-query expansion: 4 variants ──
@@ -50,7 +45,6 @@ function expandQuery(query: string): string[] {
   const cleaned = removeHindiFillers(query);
   const rangeNormalized = normalizeRanges(query);
   const cleanedNormalized = normalizeRanges(cleaned);
-
   return Array.from(new Set([
     query,
     cleaned,
@@ -59,28 +53,12 @@ function expandQuery(query: string): string[] {
   ])).filter(Boolean);
 }
 
-// ── Keyword/NLP helpers ──
+// ── Keyword helpers ──
 const STOP_WORDS = new Set([
   "a", "an", "the", "is", "are", "was", "were", "what", "which", "who", "when", "where", "tell", "me",
   "about", "for", "from", "with", "this", "that", "these", "those", "and", "or", "to", "of", "in",
   "on", "my", "your", "please", "show", "give", "need", "do", "does", "did",
 ]);
-
-const SEARCH_SYNONYMS: Record<string, string[]> = {
-  subject: ["subjects", "paper", "papers", "course", "courses"],
-  subjects: ["subject", "paper", "papers", "course"],
-  paper: ["subject", "subjects", "course", "exam"],
-  roll: ["roll number", "enrollment", "registration"],
-  exam: ["examination", "test", "session"],
-  date: ["day", "session", "schedule", "timing"],
-  name: ["candidate", "student", "applicant"],
-  marks: ["score", "result", "grade"],
-  center: ["centre", "venue", "location"],
-  centre: ["center", "venue", "location"],
-  salary: ["income", "pay", "wage", "compensation"],
-  age: ["age group", "years", "old"],
-  survival: ["survival rate", "survived", "alive"],
-};
 
 function normalizeForSearch(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -90,21 +68,12 @@ function tokenize(text: string): string[] {
   return normalizeForSearch(text).split(" ").filter((t) => t.length > 1 && !STOP_WORDS.has(t));
 }
 
-function expandQueryTerms(query: string): string[] {
-  const terms = new Set<string>(tokenize(normalizeForSearch(query)));
-  for (const token of Array.from(terms)) {
-    for (const syn of SEARCH_SYNONYMS[token] ?? []) terms.add(syn);
-  }
-  return Array.from(terms);
-}
-
-function getKeywordScore(chunkText: string, normalizedQuery: string, queryTerms: string[]): number {
+function getKeywordScore(chunkText: string, queryTerms: string[]): number {
   const normalizedChunk = normalizeForSearch(chunkText);
   const chunkTokens = new Set(tokenize(normalizedChunk));
-  let score = normalizedChunk.includes(normalizedQuery) ? 1.5 : 0;
+  let score = 0;
   for (const term of queryTerms) {
     if (!term) continue;
-    if (term.includes(" ")) { if (normalizedChunk.includes(term)) score += 1.25; continue; }
     if (chunkTokens.has(term)) score += 1;
     else if (normalizedChunk.includes(term)) score += 0.5;
   }
@@ -116,12 +85,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; magA += a[i] * a[i]; magB += b[i] * b[i]; }
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
   return denom > 0 ? dot / denom : 0;
-}
-
-function getReadabilityScore(text: string): number {
-  const sample = text.slice(0, 1000);
-  const readable = sample.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
-  return readable / Math.max(sample.length, 1);
 }
 
 // ── System prompts ──
@@ -138,13 +101,31 @@ CRITICAL RULES — Follow exactly:
 6. Keep answers SHORT — 2-4 sentences max (unless listing data).
 7. Temperature is 0 — be deterministic, not creative.
 
+NUMERIC PRECISION RULES:
+- "survival rate" = percentage (e.g. 71.59%)
+- "survival count" = number (e.g. 63)
+- "average age" = decimal number (e.g. 58.76)
+- NEVER give count when rate is asked
+- NEVER give rate when count is asked
+- These are DIFFERENT metrics, never mix them
+
+SUBJECT COUNTING RULES:
+- Count subjects from the MAIN TABLE only
+- Each ROW in the main table = ONE subject
+- Do NOT count from any other section
+- If same subject appears twice = count ONCE only
+
+ENTITY-SECTION MATCHING:
+- When question contains a person/company name AND a section name:
+  Answer ONLY from chunks where BOTH appear
+- NEVER answer from a different entity's section
+
 CITATION FORMAT (mandatory):
 After your answer, always write:
-📌 Source: [filename] | Chunk #[number]
+📌 Source: [filename] | Chunk #[number] | Page [number]
 If multiple sources: list each on a new line.`,
 
   datascience: `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with explanations.`,
-
   research: `You are an autonomous research agent. Break down questions into sub-tasks, provide structured reports.`,
 };
 
@@ -154,6 +135,7 @@ serve(async (req) => {
   try {
     const { messages, mode, sessionId } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -172,84 +154,69 @@ serve(async (req) => {
       { role: "system", content: systemPrompt },
     ];
 
-    if (mode === "documents" && userQuery) {
-      // ── Multi-query expansion: embed all 4 variants, merge results ──
+    if (mode === "documents" && userQuery && GEMINI_API_KEY) {
+      // ── Multi-query: embed all variants with Gemini, search via pgvector ──
       const queryVariants = expandQuery(userQuery);
-      const normalizedQuery = normalizeForSearch(userQuery);
-      const queryTerms = expandQueryTerms(userQuery);
+      const queryTerms = tokenize(normalizeForSearch(userQuery));
 
-      console.log(`Query variants: ${queryVariants.length}, Terms: ${queryTerms.length}`);
+      console.log(`Query variants: ${queryVariants.length}, Terms: ${queryTerms.join(",")}`);
 
-      const { data: allChunks, error: chunkError } = await supabase
-        .from("document_chunks")
-        .select("id, document_name, chunk_index, content, embedding")
-        .limit(1000);
-
-      if (chunkError) console.error("Chunk fetch error:", JSON.stringify(chunkError));
+      // Embed first variant for pgvector search
+      let queryEmbedding: number[] | null = null;
+      try {
+        queryEmbedding = await getGeminiEmbedding(queryVariants[0], GEMINI_API_KEY);
+      } catch (embErr) {
+        console.error("Query embedding failed:", embErr);
+      }
 
       let rankedChunks: any[] = [];
-      if (allChunks && allChunks.length > 0) {
-        const readableChunks = allChunks.filter((c: any) => getReadabilityScore(c.content ?? "") > 0.2);
 
-        if (readableChunks.length === 0) {
-          aiMessages.push({ role: "system", content: "Stored document text is unreadable. Tell user to re-upload." });
+      if (queryEmbedding) {
+        // Use pgvector match function for semantic search
+        const { data: semanticResults, error: matchError } = await supabase
+          .rpc("match_document_chunks", {
+            query_embedding: JSON.stringify(queryEmbedding),
+            match_threshold: 0.3,
+            match_count: 15,
+          });
+
+        if (matchError) {
+          console.error("match_document_chunks error:", matchError);
         }
 
-        // Score each chunk against ALL query variants, take max
-        const chunkScores = new Map<number, any>();
-
-        for (const variant of queryVariants) {
-          const variantEmbedding = betterEmbed(variant);
-          const variantNorm = normalizeForSearch(variant);
-          const variantTerms = expandQueryTerms(variant);
-
-          for (let ci = 0; ci < readableChunks.length; ci++) {
-            const c = readableChunks[ci];
-            let sim = 0;
-            if (c.embedding) {
-              let emb: number[];
-              try {
-                const raw = typeof c.embedding === "string" ? c.embedding : String(c.embedding);
-                emb = JSON.parse(raw);
-              } catch { emb = []; }
-              if (emb.length === variantEmbedding.length) sim = cosineSimilarity(emb, variantEmbedding);
-            }
-            const kw = getKeywordScore(c.content, variantNorm, variantTerms);
-            const hybrid = sim * 0.55 + kw * 0.45;
-
-            const existing = chunkScores.get(ci);
-            if (!existing || hybrid > existing.hybridScore) {
-              chunkScores.set(ci, {
-                document_name: c.document_name,
-                chunk_index: c.chunk_index,
-                content: c.content,
-                similarity: sim,
-                keywordScore: kw,
-                hybridScore: hybrid,
-              });
-            }
-          }
+        if (semanticResults && semanticResults.length > 0) {
+          rankedChunks = semanticResults.map((r: any) => ({
+            document_name: r.document_name,
+            chunk_index: r.chunk_index,
+            content: r.content,
+            similarity: r.similarity,
+            keywordScore: getKeywordScore(r.content, queryTerms),
+            hybridScore: r.similarity * 0.6 + getKeywordScore(r.content, queryTerms) * 0.4,
+          }));
+          rankedChunks.sort((a: any, b: any) => b.hybridScore - a.hybridScore);
         }
+      }
 
-        rankedChunks = Array.from(chunkScores.values())
-          .filter((c) => c.hybridScore > 0.05)
-          .sort((a, b) => b.hybridScore - a.hybridScore)
-          .slice(0, 15);
+      // Fallback: keyword-only search if no semantic results
+      if (rankedChunks.length === 0) {
+        const { data: allChunks } = await supabase
+          .from("document_chunks")
+          .select("document_name, chunk_index, content")
+          .limit(500);
 
-        // Fallback: pure keyword
-        if (rankedChunks.length === 0) {
-          rankedChunks = readableChunks
+        if (allChunks && allChunks.length > 0) {
+          rankedChunks = allChunks
             .map((c: any) => {
-              const kw = getKeywordScore(c.content, normalizedQuery, queryTerms);
-              return { document_name: c.document_name, chunk_index: c.chunk_index, content: c.content, similarity: 0, keywordScore: kw, hybridScore: kw };
+              const kw = getKeywordScore(c.content, queryTerms);
+              return { ...c, similarity: 0, keywordScore: kw, hybridScore: kw };
             })
             .filter((c: any) => c.keywordScore > 0)
             .sort((a: any, b: any) => b.keywordScore - a.keywordScore)
             .slice(0, 15);
         }
-
-        console.log(`Ranked ${readableChunks.length}/${allChunks.length} readable, top ${rankedChunks.length}, best: ${rankedChunks[0]?.hybridScore?.toFixed(4) ?? "0"}`);
       }
+
+      console.log(`Retrieved ${rankedChunks.length} chunks, best: ${rankedChunks[0]?.hybridScore?.toFixed(4) ?? "0"}`);
 
       if (rankedChunks.length > 0) {
         const contextText = rankedChunks
@@ -264,6 +231,8 @@ serve(async (req) => {
       } else {
         aiMessages.push({ role: "system", content: "No documents uploaded or no relevant chunks found. Tell the user to upload documents first." });
       }
+    } else if (mode === "documents" && userQuery && !GEMINI_API_KEY) {
+      aiMessages.push({ role: "system", content: "GEMINI_API_KEY is not configured. Document search unavailable." });
     }
 
     aiMessages.push(...messages);
@@ -285,7 +254,7 @@ serve(async (req) => {
 
     const [stream1, stream2] = response.body!.tee();
 
-    // Background: save assistant response to chat_history
+    // Background: save assistant response
     if (sessionId) {
       (async () => {
         try {
