@@ -1,0 +1,1 @@
+TRUNCATE TABLE public.document_chunks, public.documents, public.chat_history;
