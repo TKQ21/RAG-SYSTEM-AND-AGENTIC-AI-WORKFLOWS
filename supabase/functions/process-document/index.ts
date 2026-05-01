@@ -248,16 +248,17 @@ serve(async (req) => {
     const chunks = smartChunk(fullText);
     console.log(`"${documentName}": ${chunks.length} chunks from ${fullText.length} chars`);
 
-    // Embed and insert in batches
+    // Embed and insert in batches (prefix content with [Page N] so citations can include page)
     for (let i = 0; i < chunks.length; i += 20) {
       const batch = chunks.slice(i, i + 20).map((chunk, idx) => {
         const sanitized = sanitizeText(chunk.content);
+        const withPage = `[Page ${chunk.pageNum}] ${sanitized}`;
         return {
           document_id: documentId,
           document_name: documentName,
           chunk_index: i + idx,
-          content: sanitized,
-          embedding: JSON.stringify(betterEmbed(sanitized)),
+          content: withPage,
+          embedding: JSON.stringify(betterEmbed(withPage)),
         };
       });
 
