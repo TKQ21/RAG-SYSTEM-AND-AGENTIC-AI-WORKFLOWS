@@ -140,7 +140,8 @@ CRITICAL RULES — Follow exactly:
 
 CITATION FORMAT (mandatory):
 After your answer, always write:
-📌 Source: [filename] | Chunk #[number]
+📌 Source: [filename] | Chunk #[number] | Page [number]
+(Page number is found in the [Page N] prefix of each chunk.)
 If multiple sources: list each on a new line.`,
 
   datascience: `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with explanations.`,
@@ -259,7 +260,7 @@ serve(async (req) => {
           .join("\n\n---\n\n");
         aiMessages.push({
           role: "system",
-          content: `[Context — Document Excerpts]\n\n${contextText}\n\n[Instructions]\nAnswer ONLY from the context above. If user asks about a specific data point, find it EXACTLY. Always cite: 📌 Source: [filename] | Chunk #[number]`,
+          content: `[Context — Document Excerpts]\n\n${contextText}\n\n[Instructions]\nAnswer ONLY from the context above. If user asks about a specific range like 41-50, use ONLY 41-50 data — NEVER substitute with any other range. If exact data not found, reply exactly "Not in document." Always cite at the end: 📌 Source: [filename] | Chunk #[number] | Page [number from the [Page N] prefix]`,
         });
       } else {
         aiMessages.push({ role: "system", content: "No documents uploaded or no relevant chunks found. Tell the user to upload documents first." });
