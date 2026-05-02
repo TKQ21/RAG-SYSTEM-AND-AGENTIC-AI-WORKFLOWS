@@ -28,12 +28,16 @@ export function ChatMessage({ message }: ChatMessageProps) {
         )}
 
         <div
-          className={`rounded-lg px-4 py-3 text-sm leading-relaxed ${
+          className={`group relative rounded-xl px-4 py-3 text-sm leading-relaxed backdrop-blur-sm transition-all duration-300 ${
             isUser
-              ? "bg-primary/15 border border-primary/30 text-foreground"
-              : "bg-card border border-border text-card-foreground"
+              ? "bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/40 text-foreground hover:border-primary/70 hover:shadow-[0_0_24px_hsl(210_100%_55%/0.35)]"
+              : "bg-gradient-to-br from-card/95 to-card/70 border border-neon-cyan/20 text-card-foreground hover:border-neon-cyan/50 hover:shadow-[0_0_24px_hsl(185_100%_50%/0.3)]"
           }`}
         >
+          <div className="pointer-events-none absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+               style={{ background: isUser
+                 ? "radial-gradient(120% 80% at 50% 0%, hsl(210 100% 55% / 0.08), transparent 70%)"
+                 : "radial-gradient(120% 80% at 50% 0%, hsl(185 100% 50% / 0.08), transparent 70%)" }} />
           <div className="prose-invert prose-sm max-w-none">
             <MessageContent content={message.content} />
           </div>
@@ -41,8 +45,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
       </div>
 
       {isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary">
-          <User className="h-4 w-4 text-muted-foreground" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/40 bg-secondary"
+             style={{ boxShadow: "0 0 12px hsl(210 100% 55% / 0.25)" }}>
+          <User className="h-4 w-4 text-primary" />
         </div>
       )}
     </motion.div>
