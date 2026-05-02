@@ -67,64 +67,99 @@ function hasMeaningfulText(text: string): boolean {
   return readable >= 20 && replacementChars <= sample.length * 0.1;
 }
 
-/** Data-aware chunking: 200 chars, force split on data boundaries */
+/** Structure-aware chunking: keep tables intact, attach heading to following block.
+ *  Tables are detected by consecutive `|`-separated lines and emitted as a single chunk
+ *  (with the most recent heading prepended). Paragraphs are bundled up to ~900 chars. */
 function smartChunk(text: string): { content: string; lineStart: number; lineEnd: number; pageNum: number }[] {
-  const CHUNK_SIZE = 200;
+  const PARA_TARGET = 900;
   const chunks: { content: string; lineStart: number; lineEnd: number; pageNum: number }[] = [];
   const lines = text.split("\n");
   let currentPage = 1;
+  let lastHeading = "";
 
-  let buffer = "";
+  const isTableLine = (s: string) => {
+    const t = s.trim();
+    return t.length > 0 && (t.match(/\|/g)?.length ?? 0) >= 2;
+  };
+  const isHeadingLine = (s: string) => {
+    const t = s.trim();
+    if (!t || t.length > 120) return false;
+    if (/^#{1,6}\s+/.test(t)) return true; // markdown
+    if (/^\[Page\s*\d+\]/i.test(t)) return false;
+    // ALL CAPS or Title Case short line, no period, no pipe
+    if (/[|:]/.test(t)) return false;
+    const isAllCaps = t === t.toUpperCase() && /[A-Z]/.test(t) && t.length <= 80;
+    const isTitleCase = /^[A-Z][\w\s\-&,]{2,80}$/.test(t) && !/\.$/.test(t);
+    return isAllCaps || isTitleCase;
+  };
+
+  let buffer: string[] = [];
   let bufferStart = 0;
-  let bufferEnd = 0;
   let bufferPage = 1;
+  let bufferLen = 0;
+
+  const flushBuffer = (endLine: number) => {
+    if (!buffer.length) return;
+    const content = buffer.join(" ").trim();
+    if (content.length >= 20) {
+      chunks.push({ content, lineStart: bufferStart, lineEnd: endLine, pageNum: bufferPage });
+    }
+    buffer = [];
+    bufferLen = 0;
+  };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+    const raw = lines[i];
+    const line = raw.trim();
+    if (!line) { continue; }
 
-    // Detect page markers
-    const pageMatch = line.match(/^\[?Page\s*(\d+)\]?/i);
+    const pageMatch = line.match(/^\[?Page\s*(\d+)\]?$/i);
     if (pageMatch) {
+      flushBuffer(i - 1);
       currentPage = parseInt(pageMatch[1]);
       continue;
     }
 
-    // Is this a data line that should force a chunk boundary?
-    const isDataLine =
-      /:/.test(line) ||                          // Key: Value
-      /\d+[\.\-–]\d+/.test(line) ||              // Ranges like 41-50
-      /\d+\s*%/.test(line) ||                    // Percentages
-      /\|/.test(line) ||                          // Table rows
-      /^\s*[-•]\s/.test(line);                    // Bullet points
-
-    if (isDataLine && buffer.length > 50) {
-      // Save current buffer, start new chunk
-      chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
-      buffer = line + " ";
-      bufferStart = i;
-      bufferEnd = i;
-      bufferPage = currentPage;
-    } else if (buffer.length + line.length > CHUNK_SIZE && buffer.length > 30) {
-      chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
-      buffer = line + " ";
-      bufferStart = i;
-      bufferEnd = i;
-      bufferPage = currentPage;
-    } else {
-      if (!buffer) {
-        bufferStart = i;
-        bufferPage = currentPage;
+    // Detect a table: collect contiguous table lines into one chunk with heading prefix
+    if (isTableLine(line)) {
+      flushBuffer(i - 1);
+      const tableStart = i;
+      const tableLines: string[] = [];
+      while (i < lines.length && (isTableLine(lines[i]) || /^[\s\-=+|]+$/.test(lines[i].trim()))) {
+        if (lines[i].trim()) tableLines.push(lines[i].trim());
+        i++;
       }
-      buffer += (buffer ? " " : "") + line;
-      bufferEnd = i;
+      i--; // step back, outer loop will increment
+      const headingPrefix = lastHeading ? `${lastHeading}\n` : "";
+      const tableContent = `${headingPrefix}[TABLE]\n${tableLines.join("\n")}\n[/TABLE]`;
+      chunks.push({ content: tableContent, lineStart: tableStart, lineEnd: i, pageNum: currentPage });
+      continue;
+    }
+
+    if (isHeadingLine(line)) {
+      flushBuffer(i - 1);
+      lastHeading = line.replace(/^#{1,6}\s+/, "");
+      // start a fresh paragraph buffer with the heading included
+      buffer = [lastHeading];
+      bufferStart = i;
+      bufferPage = currentPage;
+      bufferLen = lastHeading.length;
+      continue;
+    }
+
+    if (!buffer.length) {
+      bufferStart = i;
+      bufferPage = currentPage;
+    }
+    buffer.push(line);
+    bufferLen += line.length + 1;
+
+    if (bufferLen >= PARA_TARGET) {
+      flushBuffer(i);
     }
   }
 
-  if (buffer.trim().length > 20) {
-    chunks.push({ content: buffer.trim(), lineStart: bufferStart, lineEnd: bufferEnd, pageNum: bufferPage });
-  }
-
+  flushBuffer(lines.length - 1);
   return chunks;
 }
 
