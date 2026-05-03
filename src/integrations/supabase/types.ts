@@ -57,7 +57,10 @@ export type Database = {
           document_id: string
           document_name: string
           embedding: string | null
+          end_char: number
           id: string
+          page_num: number
+          start_char: number
         }
         Insert: {
           chunk_index: number
@@ -66,7 +69,10 @@ export type Database = {
           document_id: string
           document_name: string
           embedding?: string | null
+          end_char?: number
           id?: string
+          page_num?: number
+          start_char?: number
         }
         Update: {
           chunk_index?: number
@@ -75,7 +81,10 @@ export type Database = {
           document_id?: string
           document_name?: string
           embedding?: string | null
+          end_char?: number
           id?: string
+          page_num?: number
+          start_char?: number
         }
         Relationships: [
           {
@@ -133,8 +142,11 @@ export type Database = {
           content: string
           document_id: string
           document_name: string
+          end_char: number
           id: string
+          page_num: number
           similarity: number
+          start_char: number
         }[]
       }
     }
