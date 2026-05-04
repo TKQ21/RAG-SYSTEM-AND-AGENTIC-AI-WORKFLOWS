@@ -176,7 +176,33 @@ async function visionExtract(pageImages: string[], lovableKey: string, docName: 
     const content: any[] = batch.map((img) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } }));
     content.push({
       type: "text",
-      text: `Extract ALL visible document data from pages ${pageNos.join(", ")} of "${docName}".\nFor each page, start with [Page N]. Preserve tables row-by-row. Extract every heading, label, name, number, percentage, range, KPI, chart value, and table cell exactly. Do not summarize.`,
+      text: `Pages ${pageNos.join(", ")} of "${docName}".
+
+CRITICAL: This document may have heavy watermarks (e.g., "University of Delhi", logos, decorative URLs, repeated background text). COMPLETELY IGNORE all watermarks, decorative backgrounds, page borders, and repeated header/footer noise. Extract ONLY the real foreground document data.
+
+For each page, start with [Page N]. Preserve every table row-by-row, on its own line, with cell values separated by " | ".
+
+Extract EVERY one of these if present, on its own line, exactly as written:
+- Student Name, Father's Name, Mother's Name
+- Exam Roll No, Enrollment No, Registration No
+- Course Name, Semester, College / Institution
+- For every subject row: Paper Code | Paper Name | Grade | Credit | Credit Points
+- SGPA, CGPA, Total Credits, Total Credit Points, Result (Pass/Fail)
+- Date of Result Declaration, any reference numbers
+- Every heading, label, number, percentage, range, KPI, chart value, and table cell
+
+Format examples:
+Name: MOHD KAIF
+Father Name: ...
+Exam Roll: 25345201387
+Enrollment: ...
+Course: ...
+Semester: ...
+Subject 1: 2181001001 | ENVIRONMENTAL SCIENCE | C | 2 | 10
+SGPA: 5.82
+Result: Pass
+
+Do NOT summarize. Do NOT invent. Do NOT include watermark text. If a field is not visible, skip it.`,
     });
 
     try {
@@ -184,7 +210,7 @@ async function visionExtract(pageImages: string[], lovableKey: string, docName: 
         method: "POST",
         headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "google/gemini-2.5-pro",
           messages: [{ role: "user", content }],
           temperature: 0,
           max_tokens: 6000,
