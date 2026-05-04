@@ -7,14 +7,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-type ChunkRecord = {
-  content: string;
-  chunkIndex: number;
-  pageNum: number;
-  startChar: number;
-  endChar: number;
-};
-
 function sanitizeText(text: string): string {
   return String(text || "")
     .replace(/\u0000/g, " ")
@@ -25,223 +17,45 @@ function sanitizeText(text: string): string {
     .trim();
 }
 
-function normalizeForEmbedding(text: string): string {
-  return sanitizeText(text)
-    .toLowerCase()
-    .replace(/(\d+)\s*[-–—]\s*(\d+)/g, "$1 to $2 age group")
-    .replace(/\b(ka|ki|ke|mai|mein|me|kya|hai|toh|aur|se|ko|kitni|kitna)\b/gi, " ")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function hashWord(word: string): number {
-  let h = 0;
-  for (let i = 0; i < word.length; i += 1) {
-    h = ((h << 5) - h) + word.charCodeAt(i);
-    h |= 0;
+function embed(text: string): number[] {
+  const vec = new Array(384).fill(0);
+  for (let i = 0; i < text.length; i++) {
+    vec[i % 384] += text.charCodeAt(i) / 1000;
   }
-  return Math.abs(h);
+  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
+  return vec.map((v) => v / mag);
 }
 
-function betterEmbed(text: string): number[] {
-  const dim = 384;
-  const vec = new Array(dim).fill(0);
-  const normalized = normalizeForEmbedding(text);
-  const words = normalized.split(/\s+/).filter((w) => w.length > 2);
-  const wc: Record<string, number> = {};
-
-  for (const word of words) wc[word] = (wc[word] || 0) + 1;
-
-  for (let i = 0; i < words.length - 1; i += 1) {
-    const bigram = `${words[i]}_${words[i + 1]}`;
-    wc[bigram] = (wc[bigram] || 0) + 0.7;
-  }
-
-  for (const [word, count] of Object.entries(wc)) {
-    const h = hashWord(word);
-    vec[h % dim] += count * Math.log(1 + count);
-    vec[(h * 31) % dim] += count * 0.5;
-    vec[(h * 131) % dim] += count * 0.25;
-  }
-
-  const mag = Math.sqrt(vec.reduce((sum, value) => sum + value * value, 0)) || 1;
-  return vec.map((value) => value / mag);
-}
-
-function isDataBoundary(line: string): boolean {
-  return (
-    line.includes(":") ||
-    line.includes("|") ||
-    /\d+(?:\.\d+)?\s*%/.test(line) ||
-    /\d+\s*[-–—]\s*\d+/.test(line) ||
-    /\b\d+(?:\.\d+)?\b/.test(line)
-  );
-}
-
-function splitLongChunk(text: string, maxSize = 200): string[] {
-  if (text.length <= maxSize) return [text];
-  const sentences = text.split(/(?<=[.!?।])\s+/).filter(Boolean);
-  const chunks: string[] = [];
-  let buffer = "";
-
-  for (const sentence of sentences.length ? sentences : text.match(/.{1,200}(?:\s|$)/g) || [text]) {
-    const part = sentence.trim();
-    if (!part) continue;
-    if (buffer && buffer.length + part.length + 1 > maxSize) {
-      chunks.push(buffer.trim());
-      buffer = part;
-    } else {
-      buffer += buffer ? ` ${part}` : part;
-    }
-  }
-
-  if (buffer.trim()) chunks.push(buffer.trim());
-  return chunks.flatMap((chunk) => chunk.length <= maxSize + 40 ? [chunk] : chunk.match(/.{1,200}(?:\s|$)/g)?.map((c) => c.trim()).filter(Boolean) || [chunk]);
-}
-
-function detectPage(line: string, currentPage: number): number {
-  const match = line.match(/^\[?\s*page\s+(\d+)\s*\]?/i);
-  return match ? Number(match[1]) : currentPage;
-}
-
-function smartChunk(text: string): ChunkRecord[] {
+function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
   const clean = sanitizeText(text);
-  const lines = clean.split("\n");
-  const chunks: ChunkRecord[] = [];
-  let buffer = "";
-  let pageNum = 1;
-  let bufferPage = 1;
-  let chunkIndex = 0;
-  let globalCursor = 0;
-  let bufferStart = 0;
-
-  const flush = () => {
-    const trimmed = buffer.trim();
-    if (!trimmed) {
-      buffer = "";
-      return;
+  if (clean.length <= chunkSize) return [clean];
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < clean.length) {
+    let end = Math.min(i + chunkSize, clean.length);
+    if (end < clean.length) {
+      const slice = clean.slice(i, end);
+      const lastBreak = Math.max(
+        slice.lastIndexOf("\n\n"),
+        slice.lastIndexOf(". "),
+        slice.lastIndexOf("\n"),
+      );
+      if (lastBreak > chunkSize * 0.5) end = i + lastBreak + 1;
     }
-
-    for (const piece of splitLongChunk(trimmed, 200)) {
-      const localStart = clean.indexOf(piece.slice(0, Math.min(piece.length, 30)), Math.max(0, bufferStart - 20));
-      const startChar = localStart >= 0 ? localStart : bufferStart;
-      chunks.push({
-        content: piece,
-        chunkIndex,
-        pageNum: bufferPage,
-        startChar,
-        endChar: startChar + piece.length,
-      });
-      chunkIndex += 1;
-    }
-
-    buffer = "";
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    const rawPos = clean.indexOf(rawLine, globalCursor);
-    if (rawPos >= 0) globalCursor = rawPos + rawLine.length;
-    if (!line) continue;
-
-    pageNum = detectPage(line, pageNum);
-    if (/^\[?\s*page\s+\d+\s*\]?$/i.test(line)) continue;
-
-    const startsNewDataPoint = isDataBoundary(line);
-    if (startsNewDataPoint && buffer.trim()) flush();
-    if (!buffer) {
-      bufferStart = rawPos >= 0 ? rawPos : globalCursor;
-      bufferPage = pageNum;
-    }
-
-    if (buffer.length + line.length + 1 > 200 && buffer.trim()) flush();
-    if (!buffer) {
-      bufferStart = rawPos >= 0 ? rawPos : globalCursor;
-      bufferPage = pageNum;
-    }
-    buffer += `${line}\n`;
+    const piece = clean.slice(i, end).trim();
+    if (piece.length > 10) chunks.push(piece);
+    if (end >= clean.length) break;
+    i = end - overlap;
   }
-
-  flush();
-  return chunks.filter((chunk) => chunk.content.length > 8);
-}
-
-async function visionExtract(pageImages: string[], lovableKey: string, docName: string): Promise<string> {
-  const extracted: string[] = [];
-
-  for (let i = 0; i < pageImages.length; i += 2) {
-    const batch = pageImages.slice(i, i + 2);
-    const pageNos = batch.map((_, idx) => i + idx + 1);
-    const content: any[] = batch.map((img) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${img}` } }));
-    content.push({
-      type: "text",
-      text: `Pages ${pageNos.join(", ")} of "${docName}".
-
-CRITICAL: This document may have heavy watermarks (e.g., "University of Delhi", logos, decorative URLs, repeated background text). COMPLETELY IGNORE all watermarks, decorative backgrounds, page borders, and repeated header/footer noise. Extract ONLY the real foreground document data.
-
-For each page, start with [Page N]. Preserve every table row-by-row, on its own line, with cell values separated by " | ".
-
-Extract EVERY one of these if present, on its own line, exactly as written:
-- Student Name, Father's Name, Mother's Name
-- Exam Roll No, Enrollment No, Registration No
-- Course Name, Semester, College / Institution
-- For every subject row: Paper Code | Paper Name | Grade | Credit | Credit Points
-- SGPA, CGPA, Total Credits, Total Credit Points, Result (Pass/Fail)
-- Date of Result Declaration, any reference numbers
-- Every heading, label, number, percentage, range, KPI, chart value, and table cell
-
-Format examples:
-Name: MOHD KAIF
-Father Name: ...
-Exam Roll: 25345201387
-Enrollment: ...
-Course: ...
-Semester: ...
-Subject 1: 2181001001 | ENVIRONMENTAL SCIENCE | C | 2 | 10
-SGPA: 5.82
-Result: Pass
-
-Do NOT summarize. Do NOT invent. Do NOT include watermark text. If a field is not visible, skip it.`,
-    });
-
-    try {
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-pro",
-          messages: [{ role: "user", content }],
-          temperature: 0,
-          max_tokens: 6000,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`vision extraction failed pages ${pageNos.join(",")}:`, response.status, await response.text());
-        continue;
-      }
-
-      const data = await response.json();
-      const text = data.choices?.[0]?.message?.content || "";
-      if (text.trim()) extracted.push(text.trim());
-    } catch (error) {
-      console.error("vision extraction error:", error);
-    }
-  }
-
-  return extracted.join("\n\n");
+  return chunks;
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const LOVABLE = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE) throw new Error("LOVABLE_API_KEY missing");
-
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { documentName, documentText, mimeType, fileSize, pageImages } = await req.json();
+    const { documentName, documentText, mimeType, fileSize } = await req.json();
 
     if (!documentName || typeof documentName !== "string") {
       return new Response(JSON.stringify({ error: "documentName required" }), {
@@ -250,14 +64,7 @@ serve(async (req) => {
       });
     }
 
-    let fullText = "";
-    if (Array.isArray(pageImages) && pageImages.length > 0) {
-      console.log(`Vision extraction for ${Math.min(pageImages.length, 30)} pages`);
-      fullText += `${await visionExtract(pageImages.slice(0, 30), LOVABLE, documentName)}\n\n`;
-    }
-    if (documentText) fullText += sanitizeText(documentText);
-    fullText = sanitizeText(fullText);
-
+    const fullText = sanitizeText(documentText || "");
     if (fullText.length < 20) {
       return new Response(JSON.stringify({ error: "No readable text extracted" }), {
         status: 400,
@@ -267,34 +74,41 @@ serve(async (req) => {
 
     const { data: doc, error: docError } = await supabase
       .from("documents")
-      .insert({ name: documentName, size: fileSize || fullText.length, mime_type: mimeType || "text/plain", status: "processing", chunk_count: 0 })
+      .insert({
+        name: documentName,
+        size: fileSize || fullText.length,
+        mime_type: mimeType || "text/plain",
+        status: "processing",
+        chunk_count: 0,
+      })
       .select("id")
       .single();
 
     if (docError) throw new Error(`document insert failed: ${docError.message}`);
 
-    const chunks = smartChunk(fullText);
-    console.log(`"${documentName}": ${chunks.length} chunks created with 200-char data boundaries`);
+    const chunks = chunkText(fullText);
+    console.log(`"${documentName}": ${chunks.length} chunks`);
 
     let stored = 0;
-    for (const chunk of chunks) {
-      const embedding = betterEmbed(chunk.content);
+    let cursor = 0;
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const content = chunks[idx];
+      const startChar = fullText.indexOf(content.slice(0, 30), cursor);
+      const realStart = startChar >= 0 ? startChar : cursor;
+      cursor = realStart + content.length;
+      const embedding = embed(content);
       const { error: chunkError } = await supabase.from("document_chunks").insert({
         document_id: doc.id,
         document_name: documentName,
-        chunk_index: chunk.chunkIndex,
-        content: chunk.content,
+        chunk_index: idx,
+        content,
         embedding: JSON.stringify(embedding),
-        page_num: chunk.pageNum,
-        start_char: chunk.startChar,
-        end_char: chunk.endChar,
+        page_num: 1,
+        start_char: realStart,
+        end_char: realStart + content.length,
       });
-
-      if (chunkError) {
-        console.error("chunk insert failed", chunk.chunkIndex, chunkError.message);
-      } else {
-        stored += 1;
-      }
+      if (chunkError) console.error("chunk insert failed", idx, chunkError.message);
+      else stored += 1;
     }
 
     await supabase.from("documents").update({ status: "ready", chunk_count: stored }).eq("id", doc.id);
