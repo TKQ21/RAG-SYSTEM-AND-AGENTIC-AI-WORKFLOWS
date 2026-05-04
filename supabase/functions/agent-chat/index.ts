@@ -152,7 +152,11 @@ CRITICAL GROUNDING RULES:
 7. "rate" means percentage only. "count" means integer only. Never mix them.
 8. Read table chunks row-by-row and preserve labels.
 9. Keep answer short: 2-4 sentences unless listing items.
-10. Every answer must end with citations, one per line, max 3:
+10. STUDENT RESULT QUERIES: For questions like "Mohd Kaif ka result", "[name] ka result", or any roll/enrollment number lookup:
+    - Match by student NAME, Roll No, AND Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student).
+    - Report ALL grades, every subject, SGPA, total credits, and result status found for that student.
+    - List subjects line-by-line preserving Paper Code, Paper Name, Grade, and Credit Points exactly.
+11. Every answer must end with citations, one per line, max 3:
 📌 Source: [filename] | Chunk #[n] | Page [n]
 Temperature is 0: deterministic extraction, no guessing.`;
 }
@@ -227,8 +231,8 @@ serve(async (req) => {
         const embedding = betterEmbed(variant);
         const { data, error } = await supabase.rpc("match_document_chunks", {
           query_embedding: JSON.stringify(embedding) as any,
-          match_threshold: 0.05,
-          match_count: 30,
+          match_threshold: 0.01,
+          match_count: 40,
         });
 
         if (error) {
@@ -248,13 +252,13 @@ serve(async (req) => {
       }
 
       let chunks = Array.from(seen.values())
-        .filter((chunk) => (chunk.hybridScore || 0) >= 0.05 || (chunk.keywordScore || 0) > 0)
+        .filter((chunk) => (chunk.hybridScore || 0) >= 0.03 || (chunk.keywordScore || 0) > 0)
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
-        .slice(0, 15);
+        .slice(0, 20);
 
       if (intent.exactRange) {
         const exact = chunks.filter((chunk) => keywordScore(intent.exactRange!, chunk.content) > 0);
-        if (exact.length > 0) chunks = exact.concat(chunks.filter((chunk) => !exact.some((e) => e.id === chunk.id))).slice(0, 15);
+        if (exact.length > 0) chunks = exact.concat(chunks.filter((chunk) => !exact.some((e) => e.id === chunk.id))).slice(0, 20);
       }
 
       console.log(JSON.stringify({ event: "retrieval", query: userQuery, variants, chunks: chunks.length, top: chunks[0] ? { chunk: chunks[0].chunk_index, score: chunks[0].hybridScore, sim: chunks[0].similarity, keyword: chunks[0].keywordScore } : null }));
