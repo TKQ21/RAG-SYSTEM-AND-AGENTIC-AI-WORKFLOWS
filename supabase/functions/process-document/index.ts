@@ -113,7 +113,13 @@ serve(async (req) => {
       const startChar = fullText.indexOf(content.slice(0, 30), cursor);
       const realStart = startChar >= 0 ? startChar : cursor;
       cursor = realStart + content.length;
-      const embedding = embed(content);
+      let embedding: number[];
+      try {
+        embedding = await embed(content, "RETRIEVAL_DOCUMENT");
+      } catch (e) {
+        console.error("embed error chunk", idx, e);
+        continue;
+      }
       const { error: chunkError } = await supabase.from("document_chunks").insert({
         document_id: doc.id,
         document_name: documentName,
