@@ -20,13 +20,32 @@ type RetrievedChunk = {
   hybridScore?: number;
 };
 
-function embed(text: string): number[] {
-  const vec = new Array(384).fill(0);
-  for (let i = 0; i < text.length; i++) {
-    vec[i % 384] += text.charCodeAt(i) / 1000;
+const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
+
+async function embed(text: string, taskType = "RETRIEVAL_QUERY"): Promise<number[] | null> {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "models/text-embedding-004",
+          content: { parts: [{ text: text.slice(0, 8000) }] },
+          taskType,
+        }),
+      },
+    );
+    if (!res.ok) {
+      console.error("embed failed", res.status, (await res.text()).slice(0, 200));
+      return null;
+    }
+    const json = await res.json();
+    return json.embedding?.values || null;
+  } catch (e) {
+    console.error("embed err", e);
+    return null;
   }
-  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return vec.map((v) => v / mag);
 }
 
 function normalizeQuery(q: string): string {
@@ -145,11 +164,12 @@ serve(async (req) => {
       const seen = new Map<string, RetrievedChunk>();
 
       for (const variant of variants) {
-        const embedding = embed(variant);
+        const embedding = await embed(variant, "RETRIEVAL_QUERY");
+        if (!embedding) continue;
         const { data, error } = await supabase.rpc("match_document_chunks", {
           query_embedding: JSON.stringify(embedding) as any,
-          match_threshold: 0.1,
-          match_count: 30,
+          match_threshold: 0.0,
+          match_count: 40,
         });
         if (error) {
           console.error("match_document_chunks failed:", error.message);
@@ -157,7 +177,7 @@ serve(async (req) => {
         }
         for (const raw of (data || []) as RetrievedChunk[]) {
           const kScore = keywordScore(userQuery, raw.content);
-          const hybridScore = (raw.similarity || 0) * 0.4 + kScore * 0.6;
+          const hybridScore = (raw.similarity || 0) * 0.7 + kScore * 0.3;
           const chunk = { ...raw, keywordScore: kScore, hybridScore };
           const prev = seen.get(chunk.id);
           if (!prev || (chunk.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(chunk.id, chunk);
