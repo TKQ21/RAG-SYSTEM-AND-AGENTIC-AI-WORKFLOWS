@@ -52,16 +52,18 @@ async function embed(text: string, taskType = "RETRIEVAL_QUERY"): Promise<number
 function normalizeQuery(q: string): string {
   return String(q || "")
     .toLowerCase()
-    .replace(/\b(ka|ki|ke|mai|mein|me|kya|hai|toh|aur|se|ko|kitni|kitna|batao|please|yr|yaar)\b/gi, " ")
+    .replace(/\b(ka|ki|ke|mai|mein|me|kya|hai|toh|aur|se|ko|kitni|kitna|batao|please|yr|yaar|likha|bata|do|kar|kare|wala|wale|wali|section|dashboard)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function keywords(text: string): string[] {
+  // preserve numeric ranges like 40-50, 41-50, 71+
   return normalizeQuery(text)
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/[^\p{L}\p{N}\-+\s]/gu, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 2 && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document)$/.test(w));
+    .map((w) => w.replace(/^[-+]+|[-+]+$/g, (m) => (/\d/.test(w) ? m : "")))
+    .filter((w) => w.length >= 2 && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
 }
 
 function keywordScore(question: string, content: string): number {
@@ -69,10 +71,20 @@ function keywordScore(question: string, content: string): number {
   if (qWords.length === 0) return 0;
   const haystack = ` ${content.toLowerCase()} `;
   let score = 0;
+  let numericHits = 0;
+  let numericTotal = 0;
   for (const word of qWords) {
-    if (haystack.includes(word)) score += 1;
+    const isNumeric = /\d/.test(word);
+    if (isNumeric) numericTotal += 1;
+    if (haystack.includes(word)) {
+      score += isNumeric ? 2 : 1; // numeric tokens (40-50, 71+, roll numbers) weigh more
+      if (isNumeric) numericHits += 1;
+    }
   }
-  return Math.min(1, score / qWords.length);
+  const base = score / (qWords.length + numericTotal); // normalise with numeric boost
+  // strong bonus when ALL numeric tokens are present in the chunk
+  const numericBonus = numericTotal > 0 && numericHits === numericTotal ? 0.4 : 0;
+  return Math.min(1, base + numericBonus);
 }
 
 function buildVariants(question: string): string[] {
@@ -185,9 +197,16 @@ serve(async (req) => {
         }
       }
 
+      // Re-weight: when numeric tokens present, keyword match matters more than semantic
+      const qNumTokens = keywords(userQuery).filter((w) => /\d/.test(w));
+      const semanticWeight = qNumTokens.length > 0 ? 0.35 : 0.6;
+      const keywordWeight = 1 - semanticWeight;
+      for (const c of seen.values()) {
+        c.hybridScore = (c.similarity || 0) * semanticWeight + (c.keywordScore || 0) * keywordWeight;
+      }
       const chunks = Array.from(seen.values())
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
-        .slice(0, 12);
+        .slice(0, 20);
 
       console.log(JSON.stringify({ event: "retrieval", query: userQuery, variants, chunks: chunks.length }));
 
