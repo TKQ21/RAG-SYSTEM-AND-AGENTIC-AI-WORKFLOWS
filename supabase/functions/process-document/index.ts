@@ -17,16 +17,33 @@ function sanitizeText(text: string): string {
     .trim();
 }
 
-function embed(text: string): number[] {
-  const vec = new Array(384).fill(0);
-  for (let i = 0; i < text.length; i++) {
-    vec[i % 384] += text.charCodeAt(i) / 1000;
+const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
+
+async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
+  const trimmed = text.slice(0, 8000);
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "models/text-embedding-004",
+        content: { parts: [{ text: trimmed }] },
+        taskType,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`embed failed ${res.status}: ${body.slice(0, 200)}`);
   }
-  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return vec.map((v) => v / mag);
+  const json = await res.json();
+  const values: number[] = json.embedding?.values || [];
+  if (values.length !== 768) throw new Error(`unexpected embedding dim ${values.length}`);
+  return values;
 }
 
-function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
+function chunkText(text: string, chunkSize = 1000, overlap = 200): string[] {
   const clean = sanitizeText(text);
   if (clean.length <= chunkSize) return [clean];
   const chunks: string[] = [];
