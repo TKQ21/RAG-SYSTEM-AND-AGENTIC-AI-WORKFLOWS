@@ -22,14 +22,15 @@ const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
 async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
   const trimmed = text.slice(0, 8000);
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "models/text-embedding-004",
+        model: "models/gemini-embedding-001",
         content: { parts: [{ text: trimmed }] },
         taskType,
+          outputDimensionality: 768,
       }),
     },
   );
