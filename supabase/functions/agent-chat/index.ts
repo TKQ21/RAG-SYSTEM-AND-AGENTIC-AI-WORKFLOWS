@@ -33,6 +33,7 @@ async function embed(text: string, taskType = "RETRIEVAL_QUERY"): Promise<number
           model: "models/gemini-embedding-001",
           content: { parts: [{ text: text.slice(0, 8000) }] },
           taskType,
+          outputDimensionality: 768,
         }),
       },
     );

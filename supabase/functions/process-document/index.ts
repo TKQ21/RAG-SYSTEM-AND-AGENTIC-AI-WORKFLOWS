@@ -30,6 +30,7 @@ async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<num
         model: "models/gemini-embedding-001",
         content: { parts: [{ text: trimmed }] },
         taskType,
+          outputDimensionality: 768,
       }),
     },
   );
