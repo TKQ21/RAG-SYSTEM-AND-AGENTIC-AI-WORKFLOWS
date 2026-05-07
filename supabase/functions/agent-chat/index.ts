@@ -100,10 +100,11 @@ CRITICAL RULES:
 2. Understand the user's semantic intent in English/Hindi/Hinglish, then map it to the relevant context chunks.
 3. If the answer is not in the context, say exactly: "I could not find a relevant answer in the provided documents."
 4. If multiple values exist, list ALL of them with exact labels.
-5. Read tables row-by-row and preserve labels and numbers exactly.
-6. Keep answers concise: 2-4 sentences unless listing items.
-7. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
-8. End every answer with citations, max 3, one per line:
+5. TABLES / DASHBOARDS: Power BI exports flatten tables into two parallel sequences — first all category labels, then all values in the SAME order. You MUST align them positionally by index. Example: "AGE GROUP\\n61-70 40-50 51-60 BELOW 40 71+\\n75.90% 40.38% 71.59% 74.32% 50.00%" means 61-70=75.90%, 40-50=40.38%, 51-60=71.59%, BELOW 40=74.32%, 71+=50.00%. NEVER guess — count positions carefully. If the user asks about a specific category (e.g. "40-50"), find its index in the label list and report the value at the SAME index in the value list.
+6. For "about / biography / introduction / overview" questions, include ALL biographical sentences found across the relevant chunks (birth, family, education, career) — do NOT truncate. Stitch consecutive chunks together if they continue the same paragraph.
+7. Keep answers concise (2-4 sentences) ONLY for narrow factual questions. For "about/list/all" questions give the complete answer.
+8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
+9. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
@@ -208,6 +209,36 @@ serve(async (req) => {
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
         .slice(0, 20);
 
+      // Neighbor expansion: pull adjacent chunks (±1) for the top 5 hits so paragraphs that span chunks stay intact
+      const top = chunks.slice(0, 5);
+      const neighborKeys = new Set<string>();
+      for (const c of top) {
+        neighborKeys.add(`${c.document_id}:${c.chunk_index - 1}`);
+        neighborKeys.add(`${c.document_id}:${c.chunk_index + 1}`);
+      }
+      const haveKeys = new Set(chunks.map((c) => `${c.document_id}:${c.chunk_index}`));
+      const missing = Array.from(neighborKeys).filter((k) => !haveKeys.has(k));
+      if (missing.length > 0) {
+        const orFilter = missing
+          .map((k) => {
+            const [doc, idx] = k.split(":");
+            return `and(document_id.eq.${doc},chunk_index.eq.${idx})`;
+          })
+          .join(",");
+        const { data: neigh } = await supabase
+          .from("document_chunks")
+          .select("id,document_id,document_name,content,chunk_index,page_num")
+          .or(orFilter);
+        for (const n of (neigh || []) as any[]) {
+          chunks.push({ ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
+        }
+        // Re-sort: keep top-scored first, then neighbors interleaved by chunk_index per doc
+        chunks.sort((a, b) => {
+          if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+          return (b.hybridScore || 0) - (a.hybridScore || 0);
+        });
+      }
+
       console.log(JSON.stringify({ event: "retrieval", query: userQuery, variants, chunks: chunks.length }));
 
       if (chunks.length > 0) {
@@ -228,7 +259,7 @@ serve(async (req) => {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: aiMessages, stream: true, temperature: 0 }),
+      body: JSON.stringify({ model: "google/gemini-2.5-pro", messages: aiMessages, stream: true, temperature: 0 }),
     });
 
     if (!response.ok) {
