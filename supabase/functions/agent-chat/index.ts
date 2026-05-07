@@ -116,7 +116,7 @@ function buildContext(chunks: RetrievedChunk[]): string {
         `[Chunk #${c.chunk_index} | File: ${c.document_name} | Sim: ${Math.round((c.similarity || 0) * 100)}% | KW: ${Math.round((c.keywordScore || 0) * 100)}%]\n${c.content}`,
     )
     .join("\n\n---\n\n")
-    .slice(0, 18000);
+    .slice(0, 32000);
 }
 
 async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string) {
