@@ -100,9 +100,14 @@ CRITICAL RULES:
 2. Understand the user's semantic intent in English/Hindi/Hinglish, then map it to the relevant context chunks.
 3. If the answer is not in the context, say exactly: "I could not find a relevant answer in the provided documents."
 4. If multiple values exist, list ALL of them with exact labels.
-5. TABLES / DASHBOARDS: Power BI exports flatten tables into two parallel sequences — first all category labels, then all values in the SAME order. You MUST align them positionally by index. Example: "AGE GROUP\\n61-70 40-50 51-60 BELOW 40 71+\\n75.90% 40.38% 71.59% 74.32% 50.00%" means 61-70=75.90%, 40-50=40.38%, 51-60=71.59%, BELOW 40=74.32%, 71+=50.00%. NEVER guess — count positions carefully. If the user asks about a specific category (e.g. "40-50"), find its index in the label list and report the value at the SAME index in the value list.
-6. For "about / biography / introduction / overview" questions, include ALL biographical sentences found across the relevant chunks (birth, family, education, career) — do NOT truncate. Stitch consecutive chunks together if they continue the same paragraph.
-7. Keep answers concise (2-4 sentences) ONLY for narrow factual questions. For "about/list/all" questions give the complete answer.
+5. POWER BI / CHART TABLES: exported text from Power BI charts is UNRELIABLE for index alignment because bars are usually drawn sorted by VALUE DESCENDING while the legend keeps a different order. NEVER assume label[i] pairs with value[i]. Instead:
+   (a) Find the chart title (e.g. "Survival rate by Age Group").
+   (b) Read both the category list and the numeric value list under that title.
+   (c) Sort the values in DESCENDING order. The largest value belongs to the FIRST visible bar. The chart's category list is usually already in that descending order — pair them in the order they appear (label[0]↔valueDesc[0], label[1]↔valueDesc[1], ...).
+   (d) Show the full mapping you derived ("Categories: [...]  Values (sorted desc): [...]") before stating the final answer for the requested category.
+   Example: chart "Survival rate by Age Group" labels "61-70 40-50 51-60 BELOW 40 71+" with values "75.90% 40.38% 71.59% 74.32% 50.00%". After sorting values descending: 75.90, 74.32, 71.59, 50.00, 40.38 → 61-70=75.90%, 40-50=74.32%, 51-60=71.59%, BELOW 40=50.00%, 71+=40.38%.
+6. For "about / biography / introduction / overview / who is / kaun hai / bare mai / baare mai" questions, return EVERY biographical sentence in the context (birth, family, education, career, awards, philanthropy). Do NOT truncate, do NOT summarise — copy verbatim and stitch consecutive chunks. Aim for a complete multi-paragraph answer (200+ words) when the source has it.
+7. Keep answers concise (2-4 sentences) ONLY for narrow single-fact questions. For "about / list / all / full / summary / detail" questions give the complete answer.
 8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
 9. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
@@ -116,7 +121,7 @@ function buildContext(chunks: RetrievedChunk[]): string {
         `[Chunk #${c.chunk_index} | File: ${c.document_name} | Sim: ${Math.round((c.similarity || 0) * 100)}% | KW: ${Math.round((c.keywordScore || 0) * 100)}%]\n${c.content}`,
     )
     .join("\n\n---\n\n")
-    .slice(0, 18000);
+    .slice(0, 32000);
 }
 
 async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string) {
@@ -207,14 +212,20 @@ serve(async (req) => {
       }
       const chunks = Array.from(seen.values())
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
-        .slice(0, 20);
+        .slice(0, 25);
 
-      // Neighbor expansion: pull adjacent chunks (±1) for the top 5 hits so paragraphs that span chunks stay intact
-      const top = chunks.slice(0, 5);
+      // Wide-intent (about / biography / list-all) → much larger neighbor radius so full sections come through
+      const ql = userQuery.toLowerCase();
+      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life)\b/i.test(ql);
+      const radius = isWideIntent ? 6 : 1;
+      const topN = isWideIntent ? 3 : 5;
+      const top = chunks.slice(0, topN);
       const neighborKeys = new Set<string>();
       for (const c of top) {
-        neighborKeys.add(`${c.document_id}:${c.chunk_index - 1}`);
-        neighborKeys.add(`${c.document_id}:${c.chunk_index + 1}`);
+        for (let off = -radius; off <= radius; off++) {
+          if (off === 0) continue;
+          neighborKeys.add(`${c.document_id}:${c.chunk_index + off}`);
+        }
       }
       const haveKeys = new Set(chunks.map((c) => `${c.document_id}:${c.chunk_index}`));
       const missing = Array.from(neighborKeys).filter((k) => !haveKeys.has(k));

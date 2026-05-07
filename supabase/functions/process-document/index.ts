@@ -44,7 +44,7 @@ async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<num
   return values;
 }
 
-function chunkText(text: string, chunkSize = 1000, overlap = 200): string[] {
+function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
   const clean = sanitizeText(text);
   if (clean.length <= chunkSize) return [clean];
   const chunks: string[] = [];
@@ -107,33 +107,57 @@ serve(async (req) => {
     const chunks = chunkText(fullText);
     console.log(`"${documentName}": ${chunks.length} chunks`);
 
+    // Process in parallel batches to scale to large documents (~10k pages)
+    const CONCURRENCY = 8;
+    const BATCH_INSERT = 50;
     let stored = 0;
     let cursor = 0;
-    for (let idx = 0; idx < chunks.length; idx++) {
-      const content = chunks[idx];
+    const positions = chunks.map((content) => {
       const startChar = fullText.indexOf(content.slice(0, 30), cursor);
       const realStart = startChar >= 0 ? startChar : cursor;
       cursor = realStart + content.length;
-      let embedding: number[];
-      try {
-        embedding = await embed(content, "RETRIEVAL_DOCUMENT");
-      } catch (e) {
-        console.error("embed error chunk", idx, e);
-        continue;
+      return { content, realStart };
+    });
+
+    let pendingRows: any[] = [];
+    const flush = async () => {
+      if (!pendingRows.length) return;
+      const { error } = await supabase.from("document_chunks").insert(pendingRows);
+      if (error) console.error("batch insert failed", error.message);
+      else stored += pendingRows.length;
+      pendingRows = [];
+    };
+
+    for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+      const slice = chunks.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        slice.map(async (content, j) => {
+          try {
+            const embedding = await embed(content, "RETRIEVAL_DOCUMENT");
+            return { content, embedding, idx: i + j };
+          } catch (e) {
+            console.error("embed error chunk", i + j, e);
+            return null;
+          }
+        }),
+      );
+      for (const r of results) {
+        if (!r) continue;
+        const pos = positions[r.idx];
+        pendingRows.push({
+          document_id: doc.id,
+          document_name: documentName,
+          chunk_index: r.idx,
+          content: r.content,
+          embedding: JSON.stringify(r.embedding),
+          page_num: 1,
+          start_char: pos.realStart,
+          end_char: pos.realStart + r.content.length,
+        });
+        if (pendingRows.length >= BATCH_INSERT) await flush();
       }
-      const { error: chunkError } = await supabase.from("document_chunks").insert({
-        document_id: doc.id,
-        document_name: documentName,
-        chunk_index: idx,
-        content,
-        embedding: JSON.stringify(embedding),
-        page_num: 1,
-        start_char: realStart,
-        end_char: realStart + content.length,
-      });
-      if (chunkError) console.error("chunk insert failed", idx, chunkError.message);
-      else stored += 1;
     }
+    await flush();
 
     await supabase.from("documents").update({ status: "ready", chunk_count: stored }).eq("id", doc.id);
 

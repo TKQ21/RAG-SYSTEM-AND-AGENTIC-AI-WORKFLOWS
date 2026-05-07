@@ -61,8 +61,18 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
   }, [isOpen, loadSessions]);
 
   const deleteSession = async (sessionId: string) => {
-    await supabase.from("chat_history").delete().eq("session_id", sessionId);
+    const { error } = await supabase.from("chat_history").delete().eq("session_id", sessionId);
+    if (error) {
+      console.error("delete session failed", error);
+      return;
+    }
     setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+    // If user deleted the active session, start a fresh one and reload UI
+    if (sessionId === currentSessionId) {
+      const fresh = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      sessionStorage.setItem("rag_session_id", fresh);
+      window.location.reload();
+    }
   };
 
   const filtered = sessions.filter((s) =>

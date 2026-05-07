@@ -3,42 +3,25 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { ChatArea } from "@/components/ChatArea";
 import { ChatHistorySidebar } from "@/components/ChatHistorySidebar";
 import { useAgentChat } from "@/hooks/useAgentChat";
-import { supabase } from "@/integrations/supabase/client";
-import { History } from "lucide-react";
-import Auth from "@/pages/Auth";
+import { IntroAnimation } from "@/components/IntroAnimation";
 
 const Index = () => {
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [showIntro, setShowIntro] = useState(() => sessionStorage.getItem("intro_shown") !== "1");
 
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  const handleIntroDone = () => {
+    sessionStorage.setItem("intro_shown", "1");
+    setShowIntro(false);
+  };
 
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-neon-cyan border-t-transparent" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Auth onAuth={() => {}} />;
-  }
-
-  return <MainApp user={user} />;
+  return (
+    <>
+      {showIntro && <IntroAnimation onComplete={handleIntroDone} />}
+      <MainApp />
+    </>
+  );
 };
 
-function MainApp({ user }: { user: any }) {
+function MainApp() {
   const {
     messages, isProcessing, currentSteps, mode, setMode,
     documents, sendMessage, uploadDocument, removeDocument,
@@ -46,10 +29,6 @@ function MainApp({ user }: { user: any }) {
   } = useAgentChat();
 
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background">
@@ -61,8 +40,8 @@ function MainApp({ user }: { user: any }) {
         onRemoveDoc={removeDocument}
         totalChunks={totalChunks}
         totalQueries={totalQueries}
-        userEmail={user.email}
-        onLogout={handleLogout}
+        userEmail={"guest@nexus.rag"}
+        onLogout={() => {}}
         onOpenHistory={() => setHistoryOpen(true)}
       />
 
