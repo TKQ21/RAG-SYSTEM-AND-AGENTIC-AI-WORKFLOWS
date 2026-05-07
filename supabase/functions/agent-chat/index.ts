@@ -212,14 +212,20 @@ serve(async (req) => {
       }
       const chunks = Array.from(seen.values())
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
-        .slice(0, 20);
+        .slice(0, 25);
 
-      // Neighbor expansion: pull adjacent chunks (±1) for the top 5 hits so paragraphs that span chunks stay intact
-      const top = chunks.slice(0, 5);
+      // Wide-intent (about / biography / list-all) → much larger neighbor radius so full sections come through
+      const ql = userQuery.toLowerCase();
+      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life)\b/i.test(ql);
+      const radius = isWideIntent ? 6 : 1;
+      const topN = isWideIntent ? 3 : 5;
+      const top = chunks.slice(0, topN);
       const neighborKeys = new Set<string>();
       for (const c of top) {
-        neighborKeys.add(`${c.document_id}:${c.chunk_index - 1}`);
-        neighborKeys.add(`${c.document_id}:${c.chunk_index + 1}`);
+        for (let off = -radius; off <= radius; off++) {
+          if (off === 0) continue;
+          neighborKeys.add(`${c.document_id}:${c.chunk_index + off}`);
+        }
       }
       const haveKeys = new Set(chunks.map((c) => `${c.document_id}:${c.chunk_index}`));
       const missing = Array.from(neighborKeys).filter((k) => !haveKeys.has(k));
