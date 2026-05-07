@@ -259,7 +259,7 @@ serve(async (req) => {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: aiMessages, stream: true, temperature: 0 }),
+      body: JSON.stringify({ model: "google/gemini-2.5-pro", messages: aiMessages, stream: true, temperature: 0 }),
     });
 
     if (!response.ok) {
