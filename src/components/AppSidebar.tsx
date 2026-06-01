@@ -30,25 +30,25 @@ interface SidebarProps {
 
 export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout, onOpenHistory }: SidebarProps) {
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-cyan/20 bg-sidebar overflow-hidden"
-      style={{ boxShadow: "inset -1px 0 15px hsl(185 100% 50% / 0.05)" }}>
+    <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-pink/20 bg-sidebar overflow-hidden"
+      style={{ boxShadow: "inset -1px 0 18px hsl(330 100% 62% / 0.08)" }}>
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-neon-cyan/20 px-4 py-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-neon-cyan/30 bg-secondary/50"
-          style={{ boxShadow: "0 0 15px hsl(185 100% 50% / 0.2)" }}>
-          <Brain className="h-5 w-5 text-neon-cyan" />
+      <div className="flex items-center gap-3 border-b border-neon-pink/20 px-4 py-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-neon-pink/40 bg-secondary/50"
+          style={{ boxShadow: "0 0 18px hsl(330 100% 62% / 0.4)" }}>
+          <Brain className="h-5 w-5 text-neon-pink" />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-xs font-black uppercase tracking-wider text-foreground">RAG System & Agentic AI Workflow</h1>
-          <p className="font-mono text-[10px] font-bold text-neon-cyan" style={{ textShadow: "0 0 8px hsl(185 100% 50% / 0.5)" }}>[ NEXUS RAG ]</p>
+          <p className="font-mono text-[10px] font-bold text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.6)" }}>[ NEXUS RAG ]</p>
         </div>
-        <button onClick={onOpenHistory} className="rounded-lg border border-neon-cyan/20 p-2 text-neon-cyan/70 hover:bg-neon-cyan/10 hover:text-neon-cyan transition-all" style={{ boxShadow: "0 0 8px hsl(185 100% 50% / 0.1)" }} title="Chat History">
+        <button onClick={onOpenHistory} className="rounded-lg border border-neon-pink/30 p-2 text-neon-pink/80 hover:bg-neon-pink/10 hover:text-neon-pink transition-all" style={{ boxShadow: "0 0 10px hsl(330 100% 62% / 0.2)" }} title="Chat History">
           <History className="h-4 w-4" />
         </button>
       </div>
 
       {/* Badges */}
-      <div className="flex gap-1.5 border-b border-neon-cyan/10 px-4 py-2">
+      <div className="flex gap-1.5 border-b border-neon-pink/10 px-4 py-2">
         {["AGENTIC", "MULTI-MODE", "ZERO HALLUCINATION"].map((b) => (
           <span key={b} className="rounded border border-border bg-secondary/50 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">{b}</span>
         ))}
@@ -74,7 +74,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
 
         {/* Upload */}
         <div className="px-4">
-          <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-neon-green" style={{ textShadow: "0 0 8px hsl(150 100% 45% / 0.4)" }}>
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.5)" }}>
             Upload Documents
           </h3>
           <DocumentPanel documents={documents} onUpload={onUpload} onRemove={onRemoveDoc} />
@@ -82,7 +82,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
 
         {/* Pipeline */}
         <div className="px-4 pt-4">
-          <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-neon-cyan" style={{ textShadow: "0 0 8px hsl(185 100% 50% / 0.4)" }}>
+          <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.5)" }}>
             8-Agent Pipeline
           </h3>
           <div className="space-y-1">
@@ -116,7 +116,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
       </div>
 
       {/* User & status */}
-      <div className="border-t border-neon-cyan/20 p-3 space-y-2">
+      <div className="border-t border-neon-pink/20 p-3 space-y-2">
         {userEmail && (
           <div className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2">
             <span className="truncate text-[11px] text-muted-foreground">{userEmail}</span>
