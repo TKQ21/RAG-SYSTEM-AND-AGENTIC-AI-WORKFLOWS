@@ -9,8 +9,8 @@ type ModeTheme = {
   description: string;
   text: string;
   border: string;
-  hoverBorder: string;
   bgActive: string;
+  hex: string;
   glow: string;
   hoverGlow: string;
 };
@@ -23,8 +23,8 @@ const MODES: ModeTheme[] = [
     description: "Query your uploaded docs",
     text: "text-neon-pink",
     border: "border-neon-pink/40",
-    hoverBorder: "hover:border-neon-pink",
     bgActive: "bg-neon-pink/10",
+    hex: "hsl(330 100% 62%)",
     glow: "0 0 18px hsl(330 100% 62% / 0.45), inset 0 0 12px hsl(330 100% 62% / 0.12)",
     hoverGlow: "0 0 14px hsl(330 100% 62% / 0.35)",
   },
@@ -35,8 +35,8 @@ const MODES: ModeTheme[] = [
     description: "Get ML/DS code & guidance",
     text: "text-neon-green",
     border: "border-neon-green/40",
-    hoverBorder: "hover:border-neon-green",
     bgActive: "bg-neon-green/10",
+    hex: "hsl(150 100% 45%)",
     glow: "0 0 18px hsl(150 100% 45% / 0.45), inset 0 0 12px hsl(150 100% 45% / 0.12)",
     hoverGlow: "0 0 14px hsl(150 100% 45% / 0.35)",
   },
@@ -47,8 +47,8 @@ const MODES: ModeTheme[] = [
     description: "Multi-step research analysis",
     text: "text-neon-red",
     border: "border-neon-red/40",
-    hoverBorder: "hover:border-neon-red",
     bgActive: "bg-neon-red/10",
+    hex: "hsl(350 100% 58%)",
     glow: "0 0 18px hsl(350 100% 58% / 0.5), inset 0 0 12px hsl(350 100% 58% / 0.14)",
     hoverGlow: "0 0 14px hsl(350 100% 58% / 0.4)",
   },
@@ -74,34 +74,45 @@ export function ModeSelector({ mode, onModeChange }: ModeSelectorProps) {
               whileHover={{ y: -1 }}
               whileTap={{ scale: 0.98 }}
               onMouseEnter={(e) => {
-                if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = m.hoverGlow;
+                const el = e.currentTarget as HTMLButtonElement;
+                if (!isActive) {
+                  el.style.boxShadow = m.hoverGlow;
+                  el.style.borderColor = m.hex;
+                  el.dataset.hover = "1";
+                }
               }}
               onMouseLeave={(e) => {
-                if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = "";
+                const el = e.currentTarget as HTMLButtonElement;
+                if (!isActive) {
+                  el.style.boxShadow = "";
+                  el.style.borderColor = "";
+                  el.dataset.hover = "";
+                }
               }}
               onClick={() => onModeChange(m.value)}
               style={isActive ? { boxShadow: m.glow } : undefined}
               className={`group relative flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all duration-200 backdrop-blur-sm ${
-                isActive
-                  ? `${m.border} ${m.bgActive}`
-                  : `border-border/60 bg-secondary/30 ${m.hoverBorder}`
+                isActive ? `${m.border} ${m.bgActive}` : "border-border/60 bg-secondary/30"
               }`}
             >
               <span
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-all ${
-                  isActive ? `${m.border} ${m.bgActive}` : "border-border/60 bg-background/40 group-hover:" + m.border.replace("border-", "border-")
+                  isActive ? `${m.border} ${m.bgActive}` : "border-border/60 bg-background/40"
                 }`}
               >
-                <m.icon className={`h-4 w-4 transition-colors ${isActive ? m.text : `text-muted-foreground group-hover:${m.text}`}`} />
+                <m.icon
+                  className={`h-4 w-4 transition-colors ${isActive ? m.text : "text-muted-foreground"}`}
+                  style={!isActive ? { color: undefined } : undefined}
+                />
               </span>
               <div className="min-w-0 flex-1">
-                <div className={`text-xs font-semibold tracking-wide transition-colors ${isActive ? m.text : `text-foreground/80 group-hover:${m.text}`}`}>
+                <div className={`text-xs font-semibold tracking-wide transition-colors ${isActive ? m.text : "text-foreground/80"}`}>
                   {m.label}
                 </div>
                 <div className="text-[10px] text-muted-foreground/70">{m.description}</div>
               </div>
               {isActive && (
-                <span className={`h-1.5 w-1.5 rounded-full ${m.text.replace("text-", "bg-")} animate-pulse-neon`} />
+                <span className={`h-1.5 w-1.5 rounded-full animate-pulse-neon`} style={{ backgroundColor: m.hex, boxShadow: `0 0 8px ${m.hex}` }} />
               )}
             </motion.button>
           );
