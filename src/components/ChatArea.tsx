@@ -18,27 +18,30 @@ const MODE_ICONS: Record<AgentMode, string> = {
   research: "🔍",
 };
 
-const MODE_THEME: Record<AgentMode, { text: string; border: string; glow: string; hoverGlow: string; bg: string }> = {
+const MODE_THEME: Record<AgentMode, { text: string; border: string; bg: string; hex: string; glow: string; hoverGlow: string }> = {
   documents: {
     text: "text-neon-pink",
     border: "border-neon-pink/50",
     bg: "bg-neon-pink/10",
-    glow: "0 0 14px hsl(330 100% 62% / 0.4), inset 0 0 10px hsl(330 100% 62% / 0.1)",
-    hoverGlow: "0 0 12px hsl(330 100% 62% / 0.3)",
+    hex: "hsl(330 100% 62%)",
+    glow: "0 0 14px hsl(330 100% 62% / 0.45), inset 0 0 10px hsl(330 100% 62% / 0.12)",
+    hoverGlow: "0 0 12px hsl(330 100% 62% / 0.35)",
   },
   datascience: {
     text: "text-neon-green",
     border: "border-neon-green/50",
     bg: "bg-neon-green/10",
-    glow: "0 0 14px hsl(150 100% 45% / 0.4), inset 0 0 10px hsl(150 100% 45% / 0.1)",
-    hoverGlow: "0 0 12px hsl(150 100% 45% / 0.3)",
+    hex: "hsl(150 100% 45%)",
+    glow: "0 0 14px hsl(150 100% 45% / 0.45), inset 0 0 10px hsl(150 100% 45% / 0.12)",
+    hoverGlow: "0 0 12px hsl(150 100% 45% / 0.35)",
   },
   research: {
     text: "text-neon-red",
     border: "border-neon-red/50",
     bg: "bg-neon-red/10",
-    glow: "0 0 14px hsl(350 100% 58% / 0.45), inset 0 0 10px hsl(350 100% 58% / 0.12)",
-    hoverGlow: "0 0 12px hsl(350 100% 58% / 0.35)",
+    hex: "hsl(350 100% 58%)",
+    glow: "0 0 14px hsl(350 100% 58% / 0.5), inset 0 0 10px hsl(350 100% 58% / 0.14)",
+    hoverGlow: "0 0 12px hsl(350 100% 58% / 0.4)",
   },
 };
 
@@ -74,12 +77,27 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
             return (
               <button
                 key={m}
-                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = t.hoverGlow; }}
-                onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = ""; }}
+                onClick={() => {}}
+                onMouseEnter={(e) => {
+                  const el = e.currentTarget as HTMLButtonElement;
+                  if (!isActive) {
+                    el.style.boxShadow = t.hoverGlow;
+                    el.style.color = t.hex;
+                    el.style.borderColor = t.hex;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  const el = e.currentTarget as HTMLButtonElement;
+                  if (!isActive) {
+                    el.style.boxShadow = "";
+                    el.style.color = "";
+                    el.style.borderColor = "";
+                  }
+                }}
                 className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200 ${
                   isActive
                     ? `${t.border} ${t.bg} ${t.text}`
-                    : `border-border/40 text-muted-foreground hover:${t.text} hover:${t.border.replace("/50","")}`
+                    : "border-border/40 text-muted-foreground"
                 }`}
                 style={isActive ? { boxShadow: t.glow } : {}}
               >
