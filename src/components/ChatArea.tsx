@@ -7,8 +7,8 @@ import { AgentSteps } from "./AgentSteps";
 import type { ChatMessage as ChatMessageType, AgentStep, AgentMode } from "@/types/agent";
 
 const MODE_LABELS: Record<AgentMode, string> = {
-  documents: "Ask Documents",
-  datascience: "DS Helper",
+  documents: "Document",
+  datascience: "Data Science Helper",
   research: "Auto Research",
 };
 
@@ -16,6 +16,30 @@ const MODE_ICONS: Record<AgentMode, string> = {
   documents: "📄",
   datascience: "🧪",
   research: "🔍",
+};
+
+const MODE_THEME: Record<AgentMode, { text: string; border: string; glow: string; hoverGlow: string; bg: string }> = {
+  documents: {
+    text: "text-neon-pink",
+    border: "border-neon-pink/50",
+    bg: "bg-neon-pink/10",
+    glow: "0 0 14px hsl(330 100% 62% / 0.4), inset 0 0 10px hsl(330 100% 62% / 0.1)",
+    hoverGlow: "0 0 12px hsl(330 100% 62% / 0.3)",
+  },
+  datascience: {
+    text: "text-neon-green",
+    border: "border-neon-green/50",
+    bg: "bg-neon-green/10",
+    glow: "0 0 14px hsl(150 100% 45% / 0.4), inset 0 0 10px hsl(150 100% 45% / 0.1)",
+    hoverGlow: "0 0 12px hsl(150 100% 45% / 0.3)",
+  },
+  research: {
+    text: "text-neon-red",
+    border: "border-neon-red/50",
+    bg: "bg-neon-red/10",
+    glow: "0 0 14px hsl(350 100% 58% / 0.45), inset 0 0 10px hsl(350 100% 58% / 0.12)",
+    hoverGlow: "0 0 12px hsl(350 100% 58% / 0.35)",
+  },
 };
 
 const PLACEHOLDERS: Record<AgentMode, string> = {
@@ -42,33 +66,41 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
   return (
     <div className="flex flex-1 flex-col">
       {/* Header tabs */}
-      <div className="flex items-center justify-between border-b border-neon-cyan/20 px-6 py-2">
-        <div className="flex items-center gap-4">
-          {(["documents", "datascience", "research"] as AgentMode[]).map((m) => (
-            <button
-              key={m}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-                mode === m
-                  ? "bg-neon-cyan/15 text-neon-cyan border border-neon-cyan/30"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              style={mode === m ? { boxShadow: "0 0 10px hsl(185 100% 50% / 0.15)" } : {}}
-            >
-              <span>{MODE_ICONS[m]}</span>
-              {MODE_LABELS[m]}
-            </button>
-          ))}
+      <div className="flex items-center justify-between border-b border-neon-pink/20 px-6 py-2.5 backdrop-blur-sm">
+        <div className="flex items-center gap-2">
+          {(["documents", "datascience", "research"] as AgentMode[]).map((m) => {
+            const t = MODE_THEME[m];
+            const isActive = mode === m;
+            return (
+              <button
+                key={m}
+                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = t.hoverGlow; }}
+                onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.boxShadow = ""; }}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200 ${
+                  isActive
+                    ? `${t.border} ${t.bg} ${t.text}`
+                    : `border-border/40 text-muted-foreground hover:${t.text} hover:${t.border.replace("/50","")}`
+                }`}
+                style={isActive ? { boxShadow: t.glow } : {}}
+              >
+                <span>{MODE_ICONS[m]}</span>
+                {MODE_LABELS[m]}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex items-center gap-1.5 rounded-full border border-neon-green/30 bg-secondary/50 px-3 py-1"
-          style={{ boxShadow: "0 0 8px hsl(150 100% 45% / 0.15)" }}>
+        <div className="flex items-center gap-1.5 rounded-full border border-neon-green/40 bg-background/40 px-3 py-1"
+          style={{ boxShadow: "0 0 10px hsl(150 100% 45% / 0.25)" }}>
           <div className="h-1.5 w-1.5 rounded-full bg-neon-green animate-pulse-neon" />
-          <span className="text-[10px] font-mono text-neon-green">LIVE</span>
+          <span className="text-[10px] font-mono font-semibold text-neon-green">LIVE</span>
         </div>
       </div>
 
       {/* Sub-header */}
-      <div className="border-b border-border/50 px-6 py-1.5">
-        <span className="text-[11px] text-muted-foreground">Query your uploaded documents</span>
+      <div className="border-b border-border/40 px-6 py-1.5">
+        <span className={`text-[11px] font-medium ${MODE_THEME[mode].text}`} style={{ textShadow: `0 0 8px currentColor` }}>
+          {mode === "documents" ? "Query your uploaded documents" : mode === "datascience" ? "Get ML / DS code and guidance" : "Multi-step research analysis"}
+        </span>
       </div>
 
       {/* Messages */}
@@ -115,7 +147,7 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
       </div>
 
       {/* Input */}
-      <div className="border-t border-neon-cyan/20 p-4">
+      <div className="border-t border-neon-pink/20 p-4">
         <div className="mx-auto max-w-3xl">
           <ChatInput onSend={onSend} isProcessing={isProcessing} placeholder={PLACEHOLDERS[mode]} />
         </div>
@@ -123,7 +155,7 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
 
       {/* Footer */}
       <div className="border-t border-border/30 px-6 py-2 text-center">
-        <span className="text-[10px] text-muted-foreground">© 2026 <span className="font-semibold text-neon-cyan">Mohd Kaif</span> · Built with <span className="text-neon-red">AI</span> assistance</span>
+        <span className="text-[10px] text-muted-foreground">© 2026 <span className="font-semibold text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.5)" }}>Mohd Kaif</span> · Built with <span className="text-neon-red">AI</span> assistance</span>
       </div>
     </div>
   );
