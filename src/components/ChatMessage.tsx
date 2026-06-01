@@ -17,8 +17,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
       className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
     >
       {!isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary glow-blue">
-          <Bot className="h-4 w-4 text-neon-blue" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neon-pink/40 bg-secondary"
+             style={{ boxShadow: "0 0 14px hsl(330 100% 62% / 0.35)" }}>
+          <Bot className="h-4 w-4 text-neon-pink" />
         </div>
       )}
 
@@ -28,16 +29,16 @@ export function ChatMessage({ message }: ChatMessageProps) {
         )}
 
         <div
-          className={`group relative rounded-xl px-4 py-3 text-sm leading-relaxed backdrop-blur-sm transition-all duration-300 ${
+          className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed backdrop-blur-md transition-all duration-300 ${
             isUser
-              ? "bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/40 text-foreground hover:border-primary/70 hover:shadow-[0_0_24px_hsl(210_100%_55%/0.35)]"
-              : "bg-gradient-to-br from-card/95 to-card/70 border border-neon-cyan/20 text-card-foreground hover:border-neon-cyan/50 hover:shadow-[0_0_24px_hsl(185_100%_50%/0.3)]"
+              ? "bg-gradient-to-br from-neon-pink/25 via-neon-red/15 to-transparent border border-neon-pink/50 text-foreground hover:border-neon-pink/80 hover:shadow-[0_0_28px_hsl(330_100%_62%/0.45)]"
+              : "bg-gradient-to-br from-card/95 to-card/60 border border-neon-pink/15 text-card-foreground hover:border-neon-pink/45 hover:shadow-[0_0_24px_hsl(330_100%_62%/0.28)]"
           }`}
         >
-          <div className="pointer-events-none absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+          <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                style={{ background: isUser
-                 ? "radial-gradient(120% 80% at 50% 0%, hsl(210 100% 55% / 0.08), transparent 70%)"
-                 : "radial-gradient(120% 80% at 50% 0%, hsl(185 100% 50% / 0.08), transparent 70%)" }} />
+                 ? "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.12), transparent 70%)"
+                 : "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.1), transparent 70%)" }} />
           <div className="prose-invert prose-sm max-w-none">
             <MessageContent content={message.content} />
           </div>
@@ -45,9 +46,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
       </div>
 
       {isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/40 bg-secondary"
-             style={{ boxShadow: "0 0 12px hsl(210 100% 55% / 0.25)" }}>
-          <User className="h-4 w-4 text-primary" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neon-pink/50 bg-secondary"
+             style={{ boxShadow: "0 0 14px hsl(330 100% 62% / 0.4)" }}>
+          <User className="h-4 w-4 text-neon-pink" />
         </div>
       )}
     </motion.div>

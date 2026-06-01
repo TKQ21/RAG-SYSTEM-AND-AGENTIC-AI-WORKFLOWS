@@ -35,7 +35,7 @@ export function ChatInput({ onSend, isProcessing, placeholder }: ChatInputProps)
   };
 
   return (
-    <div className="relative flex items-end gap-2 rounded-lg border border-border bg-card p-2 transition-all focus-within:neon-border-blue">
+    <div className="relative flex items-end gap-2 rounded-xl border border-neon-pink/30 bg-card/70 backdrop-blur-md p-2 transition-all duration-300 focus-within:neon-border-pink hover:border-neon-pink/60">
       <textarea
         ref={textareaRef}
         value={value}
@@ -46,11 +46,11 @@ export function ChatInput({ onSend, isProcessing, placeholder }: ChatInputProps)
         className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
       />
       <motion.button
-        whileHover={{ scale: 1.05 }}
+        whileHover={{ scale: 1.06 }}
         whileTap={{ scale: 0.95 }}
         onClick={handleSubmit}
         disabled={isProcessing || !value.trim()}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-neon-pink to-neon-red text-white shadow-[0_0_18px_hsl(330_100%_62%/0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-[0_0_28px_hsl(330_100%_62%/0.75)]"
       >
         {isProcessing ? (
           <Loader2 className="h-4 w-4 animate-spin" />
