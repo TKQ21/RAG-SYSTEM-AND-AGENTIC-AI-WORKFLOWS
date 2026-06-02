@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles } from "lucide-react";
+import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
@@ -24,11 +24,25 @@ interface SidebarProps {
   totalChunks: number;
   totalQueries: number;
   onOpenHistory?: () => void;
+  onCloseMobile?: () => void;
 }
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory }: SidebarProps) {
+const STAT_STYLES = [
+  { label: "Documents", border: "border-neon-pink/40", text: "text-neon-pink", glow: "0 0 14px hsl(330 100% 62% / 0.18)" },
+  { label: "Pages", border: "border-neon-purple/40", text: "text-neon-purple", glow: "0 0 14px hsl(280 100% 65% / 0.18)" },
+  { label: "Chunks", border: "border-neon-cyan/40", text: "text-neon-cyan", glow: "0 0 14px hsl(185 100% 50% / 0.18)" },
+  { label: "Queries", border: "border-neon-yellow/40", text: "text-neon-yellow", glow: "0 0 14px hsl(48 100% 60% / 0.18)" },
+];
+
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onCloseMobile }: SidebarProps) {
+  const statValues = [
+    documents.length,
+    documents.reduce((s, d) => s + (d.chunks || 0), 0),
+    totalChunks,
+    totalQueries,
+  ];
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-pink/20 bg-sidebar overflow-hidden"
+    <aside className="flex h-full w-80 max-w-[85vw] shrink-0 flex-col border-r border-neon-pink/20 bg-sidebar overflow-hidden"
       style={{ boxShadow: "inset -1px 0 18px hsl(330 100% 62% / 0.08)" }}>
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-neon-pink/20 px-4 py-3">
@@ -43,6 +57,11 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
         <button onClick={onOpenHistory} className="rounded-lg border border-neon-pink/30 p-2 text-neon-pink/80 hover:bg-neon-pink/10 hover:text-neon-pink transition-all" style={{ boxShadow: "0 0 10px hsl(330 100% 62% / 0.2)" }} title="Chat History">
           <History className="h-4 w-4" />
         </button>
+        {onCloseMobile && (
+          <button onClick={onCloseMobile} className="md:hidden rounded-lg border border-neon-pink/30 p-2 text-neon-pink/80 hover:bg-neon-pink/10 hover:text-neon-pink transition-all" title="Close">
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* Badges */}
@@ -55,17 +74,14 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
       <div className="flex-1 overflow-y-auto">
         {/* Stats */}
         <div className="grid grid-cols-2 gap-2 p-4">
-          {[
-            { label: "Documents", value: documents.length, color: "neon-cyan" },
-            { label: "Pages", value: documents.reduce((s, d) => s + (d.chunks || 0), 0), color: "neon-blue" },
-            { label: "Chunks", value: totalChunks, color: "neon-green" },
-            { label: "Queries", value: totalQueries, color: "neon-purple" },
-          ].map((s) => (
-            <div key={s.label}
-              className={`rounded-lg border border-${s.color}/30 bg-secondary/30 p-2.5 text-center`}
-              style={{ boxShadow: `0 0 10px hsl(var(--${s.color}) / 0.1)` }}>
-              <div className={`text-lg font-bold text-${s.color}`}>{s.value}</div>
-              <div className="text-[10px] text-muted-foreground">{s.label}</div>
+          {STAT_STYLES.map((s, i) => (
+            <div
+              key={s.label}
+              className={`rounded-xl border ${s.border} bg-secondary/30 p-2.5 text-center backdrop-blur-sm transition-transform hover:-translate-y-0.5`}
+              style={{ boxShadow: s.glow }}
+            >
+              <div className={`text-lg font-bold ${s.text}`}>{statValues[i]}</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{s.label}</div>
             </div>
           ))}
         </div>

@@ -100,13 +100,13 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: -300, opacity: 0 }}
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
-          className="absolute left-0 top-0 z-50 flex h-full w-80 flex-col border-r border-neon-cyan/30 bg-card/95 backdrop-blur-md"
-          style={{ boxShadow: "0 0 30px hsl(185 100% 50% / 0.15), 4px 0 20px hsl(0 0% 0% / 0.5)" }}
+          className="absolute left-0 top-0 z-50 flex h-full w-80 max-w-[85vw] flex-col border-r border-neon-pink/30 bg-card/95 backdrop-blur-md"
+          style={{ boxShadow: "0 0 30px hsl(330 100% 62% / 0.18), 4px 0 20px hsl(0 0% 0% / 0.5)" }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-neon-cyan/20 px-4 py-3">
+          <div className="flex items-center justify-between border-b border-neon-pink/20 px-4 py-3">
             <div className="flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-neon-cyan" />
+              <MessageSquare className="h-4 w-4 text-neon-pink" />
               <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">Chat History</h2>
             </div>
             <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors">
@@ -115,12 +115,12 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
           </div>
 
           {/* Search */}
-          <div className="border-b border-neon-cyan/10 p-3">
+          <div className="border-b border-neon-pink/10 p-3">
             <div
-              className="flex items-center gap-2 rounded-lg border border-neon-cyan/20 bg-secondary/50 px-3 py-2 transition-all focus-within:border-neon-cyan/50"
-              style={{ boxShadow: "inset 0 0 8px hsl(185 100% 50% / 0.05)" }}
+              className="flex items-center gap-2 rounded-lg border border-neon-pink/20 bg-secondary/50 px-3 py-2 transition-all focus-within:border-neon-pink/50"
+              style={{ boxShadow: "inset 0 0 8px hsl(330 100% 62% / 0.08)" }}
             >
-              <Search className="h-3.5 w-3.5 text-neon-cyan/60" />
+              <Search className="h-3.5 w-3.5 text-neon-pink/70" />
               <input
                 type="text"
                 value={searchQuery}
@@ -135,7 +135,7 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-neon-cyan border-t-transparent" />
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-neon-pink border-t-transparent" />
               </div>
             ) : filtered.length === 0 ? (
               <div className="py-8 text-center text-xs text-muted-foreground">
@@ -149,16 +149,16 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
                   animate={{ opacity: 1, y: 0 }}
                   className={`group flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition-all ${
                     session.session_id === currentSessionId
-                      ? "border-neon-cyan/40 bg-neon-cyan/10"
-                      : "border-border/50 bg-secondary/20 hover:border-neon-cyan/20 hover:bg-secondary/40"
+                      ? "border-neon-pink/50 bg-neon-pink/10"
+                      : "border-border/50 bg-secondary/20 hover:border-neon-pink/30 hover:bg-secondary/40"
                   }`}
-                  style={session.session_id === currentSessionId ? { boxShadow: "0 0 12px hsl(185 100% 50% / 0.1)" } : {}}
+                  style={session.session_id === currentSessionId ? { boxShadow: "0 0 14px hsl(330 100% 62% / 0.18)" } : {}}
                   onClick={() => {
                     onSelectSession(session.session_id);
                     onClose();
                   }}
                 >
-                  <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon-cyan/60" />
+                  <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon-pink/70" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-foreground">{session.first_message}</p>
                     <div className="mt-1 flex items-center gap-2">
@@ -179,7 +179,7 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
           </div>
 
           {/* Footer */}
-          <div className="border-t border-neon-cyan/10 px-3 py-2">
+          <div className="border-t border-neon-pink/10 px-3 py-2">
             <p className="text-center text-[10px] text-muted-foreground/50 font-mono">
               {sessions.length} conversation{sessions.length !== 1 ? "s" : ""}
             </p>
