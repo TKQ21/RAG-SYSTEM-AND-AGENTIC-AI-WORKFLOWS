@@ -1,18 +1,18 @@
 import { motion } from "framer-motion";
-import { Brain, Cpu, Zap, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, LogOut, History } from "lucide-react";
+import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
 
 const PIPELINE_STEPS = [
   { icon: FileSearch, label: "Ingestion", desc: "OCR & Parse all pages", color: "text-neon-cyan" },
-  { icon: Database, label: "Indexing", desc: "Chunk & Embed to Vector DB", color: "text-neon-blue" },
-  { icon: Search, label: "Query Analyst", desc: "Intent detection & decomposition", color: "text-neon-green" },
+  { icon: Database, label: "Indexing", desc: "Chunk & Embed to Vector DB", color: "text-neon-cyan" },
+  { icon: Search, label: "Query Analyst", desc: "Intent detection & decomposition", color: "text-neon-purple" },
   { icon: Shield, label: "Hybrid Retrieval", desc: "Vector + BM25 keyword search", color: "text-neon-cyan" },
-  { icon: BarChart3, label: "Reranker", desc: "Cross-encoder merge & score", color: "text-neon-red" },
+  { icon: BarChart3, label: "Reranker", desc: "Cross-encoder merge & score", color: "text-neon-pink" },
   { icon: FlaskConical, label: "LLM Reasoning", desc: "Gemini/GPT analysis", color: "text-neon-purple" },
-  { icon: Brain, label: "Research Agent", desc: "Sub-query decomposition", color: "text-neon-blue" },
-  { icon: CheckCircle2, label: "Validator", desc: "Anti-hallucination check", color: "text-neon-green" },
+  { icon: Brain, label: "Research Agent", desc: "Sub-query decomposition", color: "text-neon-cyan" },
+  { icon: CheckCircle2, label: "Validator", desc: "Anti-hallucination check", color: "text-neon-purple" },
 ];
 
 interface SidebarProps {
@@ -23,12 +23,10 @@ interface SidebarProps {
   onRemoveDoc: (id: string) => void;
   totalChunks: number;
   totalQueries: number;
-  userEmail?: string;
-  onLogout?: () => void;
   onOpenHistory?: () => void;
 }
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, userEmail, onLogout, onOpenHistory }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory }: SidebarProps) {
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-neon-pink/20 bg-sidebar overflow-hidden"
       style={{ boxShadow: "inset -1px 0 18px hsl(330 100% 62% / 0.08)" }}>
@@ -40,7 +38,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-xs font-black uppercase tracking-wider text-foreground">RAG System & Agentic AI Workflow</h1>
-          <p className="font-mono text-[10px] font-bold text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.6)" }}>[ NEXUS RAG ]</p>
+          <p className="font-mono text-[10px] text-muted-foreground">Agentic Intelligence · Zero Hallucination</p>
         </div>
         <button onClick={onOpenHistory} className="rounded-lg border border-neon-pink/30 p-2 text-neon-pink/80 hover:bg-neon-pink/10 hover:text-neon-pink transition-all" style={{ boxShadow: "0 0 10px hsl(330 100% 62% / 0.2)" }} title="Chat History">
           <History className="h-4 w-4" />
@@ -100,7 +98,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
                   <div className="text-[10px] text-muted-foreground/70">{step.desc}</div>
                 </div>
                 <motion.div
-                  className={`h-2 w-2 rounded-full bg-neon-green`}
+                  className={`h-2 w-2 rounded-full bg-neon-cyan`}
                   animate={{ opacity: [0.4, 1, 0.4] }}
                   transition={{ duration: 2, repeat: Infinity, delay: i * 0.2 }}
                 />
@@ -115,21 +113,13 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
         </div>
       </div>
 
-      {/* User & status */}
-      <div className="border-t border-neon-pink/20 p-3 space-y-2">
-        {userEmail && (
-          <div className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2">
-            <span className="truncate text-[11px] text-muted-foreground">{userEmail}</span>
-            <button onClick={onLogout} className="text-muted-foreground hover:text-destructive transition-colors">
-              <LogOut className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
+      {/* Status */}
+      <div className="border-t border-neon-pink/20 p-3">
         <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-3 py-2">
           <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity }}>
-            <Zap className="h-3.5 w-3.5 text-neon-green" />
+            <Sparkles className="h-3.5 w-3.5 text-neon-cyan" />
           </motion.div>
-          <span className="text-[10px] text-neon-green font-mono" style={{ textShadow: "0 0 6px hsl(150 100% 45% / 0.4)" }}>● LIVE</span>
+          <span className="text-[10px] text-neon-cyan font-mono" style={{ textShadow: "0 0 6px hsl(185 100% 50% / 0.4)" }}>● ONLINE</span>
           <div className="ml-auto flex items-center gap-1">
             <Cpu className="h-3 w-3 text-muted-foreground/50" />
             <span className="text-[10px] text-muted-foreground/50">v2.0</span>

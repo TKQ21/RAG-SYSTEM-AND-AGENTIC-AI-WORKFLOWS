@@ -40,8 +40,6 @@ function MainApp() {
         onRemoveDoc={removeDocument}
         totalChunks={totalChunks}
         totalQueries={totalQueries}
-        userEmail={"guest@nexus.rag"}
-        onLogout={() => {}}
         onOpenHistory={() => setHistoryOpen(true)}
       />
 
