@@ -61,10 +61,16 @@ interface ChatAreaProps {
 
 export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Track streaming content length so we re-scroll as new tokens arrive
+  const streamingLen = messages[messages.length - 1]?.content.length ?? 0;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, currentSteps]);
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, streamingLen, currentSteps.length, isProcessing]);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -122,7 +128,7 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 grid-bg relative">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 grid-bg relative">
         {/* Floating stars */}
         <div className="pointer-events-none absolute inset-0">
           {Array.from({ length: 30 }).map((_, i) => (
