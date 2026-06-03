@@ -66,8 +66,25 @@ function keywords(text: string): string[] {
     .filter((w) => w.length >= 2 && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
 }
 
+function expandedKeywords(question: string): string[] {
+  const base = keywords(question);
+  const q = normalizeQuery(question);
+  const extras: string[] = [];
+
+  // Hinglish/semantic bridge: users often call marksheets / statements "admit card" or ask "kis person ka hai".
+  // The extracted document usually contains fields like Name, Exam Roll No, Enrollment No instead.
+  if (/(admit\s*card|marksheet|mark\s*sheet|result|grade\s*card|person|candidate|student|naam|name|kiska|kis)/i.test(q)) {
+    extras.push("name", "father", "mother", "enrollment", "roll", "course", "semester", "college");
+  }
+  if (/(subject|paper|exam|date|time|timing|details?)/i.test(q)) {
+    extras.push("paper", "subject", "exam", "date", "time", "code", "commerce", "management", "business");
+  }
+
+  return Array.from(new Set([...base, ...extras].filter((w) => w.length >= 2)));
+}
+
 function keywordScore(question: string, content: string): number {
-  const qWords = keywords(question);
+  const qWords = expandedKeywords(question);
   if (qWords.length === 0) return 0;
   const haystack = ` ${content.toLowerCase()} `;
   let score = 0;
@@ -89,7 +106,35 @@ function keywordScore(question: string, content: string): number {
 
 function buildVariants(question: string): string[] {
   const norm = normalizeQuery(question);
-  return Array.from(new Set([question, norm, keywords(question).join(" ")].filter((s) => s && s.length > 1)));
+  const expanded = expandedKeywords(question).join(" ");
+  return Array.from(new Set([question, norm, keywords(question).join(" "), expanded].filter((s) => s && s.length > 1)));
+}
+
+async function keywordFallbackSearch(supabase: any, question: string): Promise<RetrievedChunk[]> {
+  const terms = expandedKeywords(question)
+    .filter((term) => term.length >= 3 && !/^(isme|kis|kya|hai)$/.test(term))
+    .slice(0, 14);
+  if (!terms.length) return [];
+
+  const orFilter = terms
+    .map((term) => `content.ilike.%${term.replace(/[%,()]/g, " ").trim()}%`)
+    .filter(Boolean)
+    .join(",");
+  if (!orFilter) return [];
+
+  const { data, error } = await supabase
+    .from("document_chunks")
+    .select("id,document_id,document_name,content,chunk_index,page_num")
+    .or(orFilter)
+    .limit(60);
+  if (error) {
+    console.error("keyword fallback failed:", error.message);
+    return [];
+  }
+  return ((data || []) as any[])
+    .map((row) => ({ ...row, similarity: 0, keywordScore: keywordScore(question, row.content), hybridScore: keywordScore(question, row.content) }))
+    .filter((row) => (row.keywordScore || 0) > 0)
+    .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0));
 }
 
 function strictPrompt(): string {
@@ -207,6 +252,14 @@ serve(async (req) => {
           const prev = seen.get(chunk.id);
           if (!prev || (chunk.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(chunk.id, chunk);
         }
+      }
+
+      // Add literal field-match candidates so identity queries like "admit card kis person ka hai"
+      // can still find chunks containing "Name / Roll No / Enrollment" even when those exact words are absent.
+      const keywordResults = await keywordFallbackSearch(supabase, userQuery);
+      for (const raw of keywordResults) {
+        const prev = seen.get(raw.id);
+        if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
       }
 
       // Re-weight: when numeric tokens present, keyword match matters more than semantic
