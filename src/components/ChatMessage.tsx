@@ -25,13 +25,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
-      <div className={`max-w-[75%] space-y-2 ${isUser ? "items-end" : ""}`}>
+      <div className={`min-w-0 space-y-2 ${isUser ? "max-w-[78%] items-end" : "max-w-[min(82%,720px)]"}`}>
         {message.steps && message.steps.length > 0 && (
           <AgentSteps steps={message.steps} />
         )}
 
         <div
-          className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed backdrop-blur-md transition-all duration-300 ${
+          className={`group relative overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed backdrop-blur-md transition-all duration-300 ${
             isUser
               ? "bg-gradient-to-br from-neon-pink/25 via-neon-red/15 to-transparent border border-neon-pink/50 text-foreground hover:border-neon-pink/80 hover:shadow-[0_0_28px_hsl(330_100%_62%/0.45)]"
               : "bg-gradient-to-br from-card/95 to-card/60 border border-neon-pink/15 text-card-foreground hover:border-neon-pink/45 hover:shadow-[0_0_24px_hsl(330_100%_62%/0.28)]"
@@ -41,7 +41,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
                style={{ background: isUser
                  ? "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.12), transparent 70%)"
                  : "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.1), transparent 70%)" }} />
-          <MessageContent content={message.content} />
+          <div className="relative z-10">
+            <MessageContent content={message.content} />
+          </div>
         </div>
       </div>
 
