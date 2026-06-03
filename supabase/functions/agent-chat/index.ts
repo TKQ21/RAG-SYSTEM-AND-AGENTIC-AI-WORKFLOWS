@@ -132,7 +132,10 @@ async function keywordFallbackSearch(supabase: any, question: string): Promise<R
     return [];
   }
   return ((data || []) as any[])
-    .map((row) => ({ ...row, similarity: 0, keywordScore: keywordScore(question, row.content), hybridScore: keywordScore(question, row.content) }))
+    .map((row) => {
+      const kScore = keywordScore(question, row.content);
+      return { ...row, similarity: Math.max(0.65, kScore), keywordScore: kScore, hybridScore: kScore };
+    })
     .filter((row) => (row.keywordScore || 0) > 0)
     .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0));
 }
