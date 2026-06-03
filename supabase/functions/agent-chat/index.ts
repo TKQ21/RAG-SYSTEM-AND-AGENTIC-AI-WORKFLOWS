@@ -154,7 +154,8 @@ CRITICAL RULES:
 6. For "about / biography / introduction / overview / who is / kaun hai / bare mai / baare mai" questions, return EVERY biographical sentence in the context (birth, family, education, career, awards, philanthropy). Do NOT truncate, do NOT summarise — copy verbatim and stitch consecutive chunks. Aim for a complete multi-paragraph answer (200+ words) when the source has it.
 7. Keep answers concise (2-4 sentences) ONLY for narrow single-fact questions. For "about / list / all / full / summary / detail" questions give the complete answer.
 8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
-9. End every answer with citations, max 3, one per line:
+9. If the user says "admit card", "person", "candidate", "student", "naam/name", and the context has a marksheet/result/statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course fields instead of rejecting it.
+10. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
