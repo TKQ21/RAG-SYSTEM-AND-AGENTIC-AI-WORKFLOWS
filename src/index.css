@@ -63,6 +63,14 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+  }
+
   * {
     @apply border-border;
   }
@@ -150,12 +158,12 @@
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(225 25% 8%);
+  background: hsl(var(--background));
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(225 20% 20%);
+  background: linear-gradient(180deg, hsl(var(--neon-pink) / 0.65), hsl(var(--neon-red) / 0.45));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(225 20% 28%);
+  background: linear-gradient(180deg, hsl(var(--neon-pink) / 0.9), hsl(var(--neon-red) / 0.7));
 }
