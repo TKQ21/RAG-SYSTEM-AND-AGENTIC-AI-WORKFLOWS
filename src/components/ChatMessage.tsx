@@ -1,5 +1,7 @@
 import { motion } from "framer-motion";
 import { User, Bot } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { AgentSteps } from "./AgentSteps";
 import type { ChatMessage as ChatMessageType } from "@/types/agent";
 
@@ -39,9 +41,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
                style={{ background: isUser
                  ? "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.12), transparent 70%)"
                  : "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.1), transparent 70%)" }} />
-          <div className="prose-invert prose-sm max-w-none">
-            <MessageContent content={message.content} />
-          </div>
+          <MessageContent content={message.content} />
         </div>
       </div>
 
@@ -56,35 +56,55 @@ export function ChatMessage({ message }: ChatMessageProps) {
 }
 
 function MessageContent({ content }: { content: string }) {
-  // Simple markdown-like rendering
-  const parts = content.split(/(```[\s\S]*?```|`[^`]+`|\*\*[^*]+\*\*|\n)/g);
-
   return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith("```") && part.endsWith("```")) {
-          const lines = part.slice(3, -3);
-          const firstNewline = lines.indexOf("\n");
-          const code = firstNewline > -1 ? lines.slice(firstNewline + 1) : lines;
-          return (
-            <pre key={i} className="my-2 overflow-x-auto rounded-md bg-secondary p-3 font-mono text-xs text-neon-green/90">
-              <code>{code}</code>
-            </pre>
-          );
-        }
-        if (part.startsWith("`") && part.endsWith("`")) {
-          return (
-            <code key={i} className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-neon-cyan">
-              {part.slice(1, -1)}
-            </code>
-          );
-        }
-        if (part.startsWith("**") && part.endsWith("**")) {
-          return <strong key={i} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>;
-        }
-        if (part === "\n") return <br key={i} />;
-        return <span key={i}>{part}</span>;
-      })}
-    </>
+    <div className="markdown-body text-sm leading-relaxed text-card-foreground">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ node, ...p }) => <h1 className="mt-4 mb-2 text-base font-bold text-neon-pink" {...p} />,
+          h2: ({ node, ...p }) => <h2 className="mt-4 mb-2 text-[15px] font-bold text-neon-pink" {...p} />,
+          h3: ({ node, ...p }) => <h3 className="mt-3 mb-1.5 text-sm font-semibold text-neon-pink/90" {...p} />,
+          h4: ({ node, ...p }) => <h4 className="mt-2 mb-1 text-sm font-semibold text-foreground" {...p} />,
+          p:  ({ node, ...p }) => <p className="my-1.5 whitespace-pre-wrap" {...p} />,
+          strong: ({ node, ...p }) => <strong className="font-semibold text-foreground" {...p} />,
+          em: ({ node, ...p }) => <em className="italic text-foreground/90" {...p} />,
+          ul: ({ node, ...p }) => <ul className="my-2 ml-5 list-disc space-y-1 marker:text-neon-pink/70" {...p} />,
+          ol: ({ node, ...p }) => <ol className="my-2 ml-5 list-decimal space-y-1 marker:text-neon-pink/70" {...p} />,
+          li: ({ node, ...p }) => <li className="leading-relaxed" {...p} />,
+          a:  ({ node, ...p }) => <a className="text-neon-cyan underline decoration-neon-cyan/40 hover:decoration-neon-cyan" target="_blank" rel="noreferrer" {...p} />,
+          blockquote: ({ node, ...p }) => (
+            <blockquote className="my-2 border-l-2 border-neon-pink/50 bg-neon-pink/5 px-3 py-1 text-foreground/80" {...p} />
+          ),
+          hr: () => <hr className="my-3 border-neon-pink/20" />,
+          table: ({ node, ...p }) => (
+            <div className="my-2 overflow-x-auto rounded-md border border-neon-pink/20">
+              <table className="w-full text-xs" {...p} />
+            </div>
+          ),
+          thead: ({ node, ...p }) => <thead className="bg-neon-pink/10 text-neon-pink" {...p} />,
+          th: ({ node, ...p }) => <th className="border-b border-neon-pink/20 px-2 py-1.5 text-left font-semibold" {...p} />,
+          td: ({ node, ...p }) => <td className="border-b border-neon-pink/10 px-2 py-1.5" {...p} />,
+          code: ({ node, inline, className, children, ...rest }: any) => {
+            if (inline) {
+              return (
+                <code className="rounded bg-secondary/80 px-1.5 py-0.5 font-mono text-[12px] text-neon-cyan" {...rest}>
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <code className={`font-mono text-[12px] text-neon-green/90 ${className || ""}`} {...rest}>
+                {children}
+              </code>
+            );
+          },
+          pre: ({ node, ...p }) => (
+            <pre className="my-2 overflow-x-auto rounded-lg border border-neon-pink/20 bg-[#0a0a14] p-3 text-[12px] leading-relaxed" {...p} />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }

@@ -182,19 +182,25 @@ serve(async (req) => {
       const variants = buildVariants(userQuery);
       const seen = new Map<string, RetrievedChunk>();
 
-      for (const variant of variants) {
-        const embedding = await embed(variant, "RETRIEVAL_QUERY");
-        if (!embedding) continue;
-        const { data, error } = await supabase.rpc("match_document_chunks", {
-          query_embedding: JSON.stringify(embedding) as any,
-          match_threshold: 0.0,
-          match_count: 40,
-        });
-        if (error) {
-          console.error("match_document_chunks failed:", error.message);
-          continue;
-        }
-        for (const raw of (data || []) as RetrievedChunk[]) {
+      // Parallel embed + match for all variants (was sequential -> slow)
+      const variantResults = await Promise.all(
+        variants.map(async (variant) => {
+          const embedding = await embed(variant, "RETRIEVAL_QUERY");
+          if (!embedding) return [] as RetrievedChunk[];
+          const { data, error } = await supabase.rpc("match_document_chunks", {
+            query_embedding: JSON.stringify(embedding) as any,
+            match_threshold: 0.0,
+            match_count: 40,
+          });
+          if (error) {
+            console.error("match_document_chunks failed:", error.message);
+            return [] as RetrievedChunk[];
+          }
+          return (data || []) as RetrievedChunk[];
+        }),
+      );
+      for (const list of variantResults) {
+        for (const raw of list) {
           const kScore = keywordScore(userQuery, raw.content);
           const hybridScore = (raw.similarity || 0) * 0.7 + kScore * 0.3;
           const chunk = { ...raw, keywordScore: kScore, hybridScore };
@@ -270,7 +276,7 @@ serve(async (req) => {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-2.5-pro", messages: aiMessages, stream: true, temperature: 0 }),
+      body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: aiMessages, stream: true, temperature: 0 }),
     });
 
     if (!response.ok) {
