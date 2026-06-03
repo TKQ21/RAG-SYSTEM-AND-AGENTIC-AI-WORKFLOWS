@@ -69,11 +69,13 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: isProcessing ? "auto" : "smooth" });
+    });
   }, [messages.length, streamingLen, currentSteps.length, isProcessing]);
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {/* Header tabs */}
       <div className="flex items-center justify-between border-b border-neon-pink/20 px-6 py-2.5 backdrop-blur-sm">
         <div className="flex items-center gap-2">
@@ -128,7 +130,7 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-6 grid-bg relative">
+      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 pb-10 grid-bg">
         {/* Floating stars */}
         <div className="pointer-events-none absolute inset-0">
           {Array.from({ length: 30 }).map((_, i) => (
