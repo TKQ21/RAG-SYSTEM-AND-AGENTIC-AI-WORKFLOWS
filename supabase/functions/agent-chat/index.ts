@@ -110,7 +110,7 @@ function buildVariants(question: string): string[] {
   return Array.from(new Set([question, norm, keywords(question).join(" "), expanded].filter((s) => s && s.length > 1)));
 }
 
-async function keywordFallbackSearch(supabase: any, question: string): Promise<RetrievedChunk[]> {
+async function keywordFallbackSearch(supabase: any, question: string, userId: string): Promise<RetrievedChunk[]> {
   const terms = expandedKeywords(question)
     .filter((term) => term.length >= 3 && !/^(isme|kis|kya|hai)$/.test(term))
     .slice(0, 14);
@@ -125,6 +125,7 @@ async function keywordFallbackSearch(supabase: any, question: string): Promise<R
   const { data, error } = await supabase
     .from("document_chunks")
     .select("id,document_id,document_name,content,chunk_index,page_num")
+    .eq("user_id", userId)
     .or(orFilter)
     .limit(60);
   if (error) {
@@ -173,7 +174,7 @@ function buildContext(chunks: RetrievedChunk[]): string {
     .slice(0, 32000);
 }
 
-async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string) {
+async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string, userId: string) {
   try {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -198,7 +199,7 @@ async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabas
         } catch {}
       }
     }
-    if (full.trim()) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: full });
+    if (full.trim()) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: full, user_id: userId });
   } catch (error) {
     console.error("history save failed:", error);
   }
@@ -214,7 +215,23 @@ serve(async (req) => {
     const LOVABLE = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE) throw new Error("LOVABLE_API_KEY missing");
 
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    const authHeader = req.headers.get("Authorization") || "";
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userId = userData.user.id;
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
     const { messages, mode, sessionId } = await req.json();
     const safeMessages: Message[] = Array.isArray(messages) ? messages : [];
     const userQuery = String(safeMessages[safeMessages.length - 1]?.content || "").trim();
@@ -240,7 +257,7 @@ serve(async (req) => {
         : userQuery;
 
     if (sessionId && userQuery) {
-      await supabase.from("chat_history").insert({ session_id: sessionId, role: "user", message: userQuery });
+      await supabase.from("chat_history").insert({ session_id: sessionId, role: "user", message: userQuery, user_id: userId });
     }
 
     const aiMessages: Message[] = [
@@ -260,6 +277,7 @@ serve(async (req) => {
           if (!embedding) return [] as RetrievedChunk[];
           const { data, error } = await supabase.rpc("match_document_chunks", {
             query_embedding: JSON.stringify(embedding) as any,
+            filter_user_id: userId,
             match_threshold: 0.0,
             match_count: 40,
           });
@@ -282,14 +300,14 @@ serve(async (req) => {
 
       // Add literal field-match candidates so identity queries like "admit card kis person ka hai"
       // can still find chunks containing "Name / Roll No / Enrollment" even when those exact words are absent.
-      const keywordResults = await keywordFallbackSearch(supabase, userQuery);
+      const keywordResults = await keywordFallbackSearch(supabase, userQuery, userId);
       for (const raw of keywordResults) {
         const prev = seen.get(raw.id);
         if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
       }
       // Also run keyword fallback on the contextualised query so follow-ups still pull the topic chunks.
       if (retrievalQuery !== userQuery) {
-        const ctxResults = await keywordFallbackSearch(supabase, retrievalQuery);
+        const ctxResults = await keywordFallbackSearch(supabase, retrievalQuery, userId);
         for (const raw of ctxResults) {
           const prev = seen.get(raw.id);
           if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
@@ -332,6 +350,7 @@ serve(async (req) => {
         const { data: neigh } = await supabase
           .from("document_chunks")
           .select("id,document_id,document_name,content,chunk_index,page_num")
+          .eq("user_id", userId)
           .or(orFilter);
         for (const n of (neigh || []) as any[]) {
           chunks.push({ ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
@@ -393,7 +412,7 @@ serve(async (req) => {
 
     if (!response.body) throw new Error("AI response stream missing");
     const [clientStream, historyStream] = response.body.tee();
-    if (sessionId) saveAssistantResponse(historyStream, supabase, sessionId);
+    if (sessionId) saveAssistantResponse(historyStream, supabase, sessionId, userId);
 
     return new Response(clientStream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
   } catch (error) {
