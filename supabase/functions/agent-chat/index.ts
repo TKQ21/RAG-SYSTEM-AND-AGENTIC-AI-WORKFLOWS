@@ -219,6 +219,26 @@ serve(async (req) => {
     const safeMessages: Message[] = Array.isArray(messages) ? messages : [];
     const userQuery = String(safeMessages[safeMessages.length - 1]?.content || "").trim();
 
+    // Build a context-aware retrieval query: short follow-ups ("and in hindi language mai 4 point",
+    // "iska hindi mai", "next point", "aur batao") must inherit the previous user turn(s) so
+    // semantic search doesn't lose the topic ("admit card", "point 3", etc.).
+    const previousUserTurns = safeMessages
+      .slice(0, -1)
+      .filter((m) => m.role === "user")
+      .slice(-2)
+      .map((m) => String(m.content || "").trim())
+      .filter(Boolean);
+    const wordCount = userQuery.split(/\s+/).filter(Boolean).length;
+    const looksLikeFollowup =
+      wordCount <= 10 ||
+      /\b(iska|isme|isko|isi|usi|wahi|same|next|previous|pichla|agla|aur|and|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(
+        userQuery,
+      );
+    const retrievalQuery =
+      looksLikeFollowup && previousUserTurns.length > 0
+        ? `${previousUserTurns.join(" \n ")} \n ${userQuery}`
+        : userQuery;
+
     if (sessionId && userQuery) {
       await supabase.from("chat_history").insert({ session_id: sessionId, role: "user", message: userQuery });
     }
@@ -228,7 +248,9 @@ serve(async (req) => {
     ];
 
     if (mode === "documents" && userQuery) {
-      const variants = buildVariants(userQuery);
+      const variants = Array.from(
+        new Set([...buildVariants(retrievalQuery), ...buildVariants(userQuery)]),
+      );
       const seen = new Map<string, RetrievedChunk>();
 
       // Parallel embed + match for all variants (was sequential -> slow)
@@ -264,6 +286,14 @@ serve(async (req) => {
       for (const raw of keywordResults) {
         const prev = seen.get(raw.id);
         if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
+      }
+      // Also run keyword fallback on the contextualised query so follow-ups still pull the topic chunks.
+      if (retrievalQuery !== userQuery) {
+        const ctxResults = await keywordFallbackSearch(supabase, retrievalQuery);
+        for (const raw of ctxResults) {
+          const prev = seen.get(raw.id);
+          if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
+        }
       }
 
       // Re-weight: when numeric tokens present, keyword match matters more than semantic
@@ -313,12 +343,16 @@ serve(async (req) => {
         });
       }
 
-      console.log(JSON.stringify({ event: "retrieval", query: userQuery, variants, chunks: chunks.length }));
+      console.log(
+        JSON.stringify({ event: "retrieval", query: userQuery, retrievalQuery, variants, chunks: chunks.length }),
+      );
 
       if (chunks.length > 0) {
         aiMessages.push({
           role: "system",
-          content: `[Context]\n${buildContext(chunks)}\n\n[User Question]\n${userQuery}\n\n[Instruction]\nAnswer using only the context. If the answer is not present, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
+          content: `[Context]\n${buildContext(chunks)}\n\n[Conversation so far]\n${previousUserTurns
+            .map((q, i) => `User${i + 1}: ${q}`)
+            .join("\n")}\n\n[Current User Question]\n${userQuery}\n\n[Instruction]\nThe current question may be a short follow-up — resolve any pronouns/ellipsis using the conversation so far (e.g. "4th point in hindi" means translate the 4th instruction of the same document discussed earlier). Answer using ONLY the context above. If asked to translate or rephrase a specific point/line/paragraph from the document, locate it precisely in the context and produce it. If truly absent, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
         });
       } else {
         aiMessages.push({
@@ -333,7 +367,13 @@ serve(async (req) => {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: aiMessages, stream: true, temperature: 0 }),
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: aiMessages,
+        stream: true,
+        temperature: 0,
+        max_tokens: 4096,
+      }),
     });
 
     if (!response.ok) {
