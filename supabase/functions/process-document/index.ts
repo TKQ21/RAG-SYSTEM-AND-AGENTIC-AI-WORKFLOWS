@@ -72,7 +72,23 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    const authHeader = req.headers.get("Authorization") || "";
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userId = userData.user.id;
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
     const { documentName, documentText, mimeType, fileSize } = await req.json();
 
     if (!documentName || typeof documentName !== "string") {
@@ -98,6 +114,7 @@ serve(async (req) => {
         mime_type: mimeType || "text/plain",
         status: "processing",
         chunk_count: 0,
+        user_id: userId,
       })
       .select("id")
       .single();
@@ -153,6 +170,7 @@ serve(async (req) => {
           page_num: 1,
           start_char: pos.realStart,
           end_char: pos.realStart + r.content.length,
+          user_id: userId,
         });
         if (pendingRows.length >= BATCH_INSERT) await flush();
       }
