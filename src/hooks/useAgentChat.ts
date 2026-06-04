@@ -9,13 +9,20 @@ const generateId = () => Math.random().toString(36).slice(2, 10);
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-chat`;
 const PROCESS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-document`;
 
-function getSessionId(): string {
-  let sid = sessionStorage.getItem("rag_session_id");
-  if (!sid) { sid = generateId() + generateId(); sessionStorage.setItem("rag_session_id", sid); }
+function getSessionId(userId: string | null): string {
+  const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
+  let sid = sessionStorage.getItem(key);
+  if (!sid) { sid = generateId() + generateId(); sessionStorage.setItem(key, sid); }
   return sid;
 }
 
-export function useAgentChat() {
+async function getAuthHeader(): Promise<string> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  return `Bearer ${token}`;
+}
+
+export function useAgentChat(userId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
@@ -23,10 +30,16 @@ export function useAgentChat() {
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [totalChunks, setTotalChunks] = useState(0);
   const [totalQueries, setTotalQueries] = useState(0);
-  const sessionId = getSessionId();
+  const sessionId = getSessionId(userId);
 
-  // Load chat history on mount
+  // Load chat history + documents on mount (per user, RLS scoped)
   useEffect(() => {
+    if (!userId) {
+      setMessages([]);
+      setDocuments([]);
+      setTotalChunks(0);
+      return;
+    }
     (async () => {
       const { data } = await supabase
         .from("chat_history")
@@ -41,14 +54,31 @@ export function useAgentChat() {
           content: m.message,
           timestamp: new Date(m.created_at).getTime(),
         })));
+      } else {
+        setMessages([]);
       }
     })();
-    // Load total chunks
     (async () => {
-      const { count } = await supabase.from("document_chunks").select("*", { count: "exact", head: true });
-      setTotalChunks(count || 0);
+      const { data } = await supabase
+        .from("documents")
+        .select("id, name, mime_type, size, chunk_count, created_at")
+        .order("created_at", { ascending: false });
+      if (data) {
+        setDocuments(data.map((d: any) => ({
+          id: d.id,
+          name: d.name,
+          type: d.mime_type || "application/octet-stream",
+          size: d.size || 0,
+          chunks: d.chunk_count || 0,
+          uploadedAt: new Date(d.created_at).getTime(),
+        })));
+        setTotalChunks(data.reduce((s: number, d: any) => s + (d.chunk_count || 0), 0));
+      } else {
+        setDocuments([]);
+        setTotalChunks(0);
+      }
     })();
-  }, [sessionId]);
+  }, [sessionId, userId]);
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
     const fullStep: AgentStep = { ...step, id: generateId(), timestamp: Date.now() };
@@ -87,7 +117,7 @@ export function useAgentChat() {
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        headers: { "Content-Type": "application/json", Authorization: await getAuthHeader() },
         body: JSON.stringify({ messages: apiMessages, mode, sessionId }),
       });
 
@@ -184,7 +214,7 @@ export function useAgentChat() {
 
       const resp = await fetch(PROCESS_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        headers: { "Content-Type": "application/json", Authorization: await getAuthHeader() },
         body: JSON.stringify(body),
       });
 
@@ -204,8 +234,13 @@ export function useAgentChat() {
     }
   }, []);
 
-  const removeDocument = useCallback((id: string) => {
+  const removeDocument = useCallback(async (id: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+    // Cascade-style delete via RLS: remove chunks then document
+    await supabase.from("document_chunks").delete().eq("document_id", id);
+    await supabase.from("documents").delete().eq("id", id);
+    const { data } = await supabase.from("documents").select("chunk_count");
+    setTotalChunks((data || []).reduce((s: number, d: any) => s + (d.chunk_count || 0), 0));
   }, []);
 
   const loadSession = useCallback(async (sid: string) => {
