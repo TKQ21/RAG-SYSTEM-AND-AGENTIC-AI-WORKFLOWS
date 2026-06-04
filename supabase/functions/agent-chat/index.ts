@@ -174,7 +174,7 @@ function buildContext(chunks: RetrievedChunk[]): string {
     .slice(0, 32000);
 }
 
-async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string) {
+async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string, userId: string) {
   try {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -199,7 +199,7 @@ async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabas
         } catch {}
       }
     }
-    if (full.trim()) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: full });
+    if (full.trim()) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: full, user_id: userId });
   } catch (error) {
     console.error("history save failed:", error);
   }
