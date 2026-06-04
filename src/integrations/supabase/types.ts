@@ -22,6 +22,7 @@ export type Database = {
           message: string
           role: string
           session_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string | null
@@ -30,6 +31,7 @@ export type Database = {
           message: string
           role: string
           session_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string | null
@@ -38,6 +40,7 @@ export type Database = {
           message?: string
           role?: string
           session_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -61,6 +64,7 @@ export type Database = {
           id: string
           page_num: number
           start_char: number
+          user_id: string | null
         }
         Insert: {
           chunk_index: number
@@ -73,6 +77,7 @@ export type Database = {
           id?: string
           page_num?: number
           start_char?: number
+          user_id?: string | null
         }
         Update: {
           chunk_index?: number
@@ -85,6 +90,7 @@ export type Database = {
           id?: string
           page_num?: number
           start_char?: number
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -105,6 +111,7 @@ export type Database = {
           name: string
           size: number
           status: string
+          user_id: string | null
         }
         Insert: {
           chunk_count?: number
@@ -114,6 +121,7 @@ export type Database = {
           name: string
           size?: number
           status?: string
+          user_id?: string | null
         }
         Update: {
           chunk_count?: number
@@ -123,6 +131,7 @@ export type Database = {
           name?: string
           size?: number
           status?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -133,6 +142,7 @@ export type Database = {
     Functions: {
       match_document_chunks: {
         Args: {
+          filter_user_id: string
           match_count?: number
           match_threshold?: number
           query_embedding: string
