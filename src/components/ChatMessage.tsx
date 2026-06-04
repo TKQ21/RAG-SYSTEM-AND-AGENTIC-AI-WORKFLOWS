@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { User, Bot } from "lucide-react";
+import { useState } from "react";
+import { User, Bot, Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentSteps } from "./AgentSteps";
@@ -11,6 +12,15 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
 
   return (
     <motion.div
@@ -44,6 +54,16 @@ export function ChatMessage({ message }: ChatMessageProps) {
           <div className="relative z-10">
             <MessageContent content={message.content} />
           </div>
+          {!isUser && message.content && (
+            <button
+              onClick={handleCopy}
+              title={copied ? "Copied!" : "Copy message"}
+              className="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-md border border-neon-pink/30 bg-background/60 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-neon-pink/80 opacity-0 backdrop-blur-sm transition-all hover:border-neon-pink/70 hover:text-neon-pink hover:shadow-[0_0_12px_hsl(330_100%_62%/0.45)] group-hover:opacity-100"
+            >
+              {copied ? <Check className="h-3 w-3 text-neon-cyan" /> : <Copy className="h-3 w-3" />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          )}
         </div>
       </div>
 

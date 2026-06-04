@@ -38,7 +38,7 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
   const statValues = [
     documents.length,
     documents.reduce((s, d) => s + (d.chunks || 0), 0),
-    totalChunks,
+    documents.length === 0 ? 0 : totalChunks,
     totalQueries,
   ];
   return (

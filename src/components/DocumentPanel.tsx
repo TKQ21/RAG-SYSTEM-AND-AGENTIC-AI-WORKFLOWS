@@ -75,6 +75,19 @@ export function DocumentPanel({ documents, onUpload, onRemove }: DocumentPanelPr
 
       {/* Document list */}
       <AnimatePresence>
+        {documents.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="rounded-md border border-dashed border-neon-pink/20 bg-secondary/20 px-3 py-3 text-center"
+          >
+            <div className="text-[11px] font-medium text-neon-pink/80">No documents yet</div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground/70">
+              Upload a PDF, TXT, or DOCX to start chatting with your data.
+            </div>
+          </motion.div>
+        )}
         {documents.map((doc) => (
           <motion.div
             key={doc.id}
