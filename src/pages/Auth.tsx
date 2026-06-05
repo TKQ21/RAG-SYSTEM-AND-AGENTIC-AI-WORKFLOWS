@@ -93,12 +93,12 @@ export default function Auth() {
               <Brain className="h-7 w-7 text-neon-pink" />
             </motion.div>
             <h1
-              className="text-4xl sm:text-5xl font-black uppercase tracking-[0.18em] text-foreground"
+              className="text-2xl sm:text-3xl font-black uppercase tracking-[0.18em] text-foreground"
               style={{ textShadow: "0 0 24px hsl(330 100% 62% / 0.7)" }}
             >
               NEXUS RAG
             </h1>
-            <p className="mt-2 font-mono text-[11px] sm:text-xs uppercase tracking-[0.22em] text-neon-cyan/90">
+            <p className="mt-2 font-mono text-sm sm:text-base uppercase tracking-[0.22em] text-neon-cyan/90">
               RAG System &amp; Agentic AI Workflow
             </p>
             <div className="mt-4 flex items-center justify-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
