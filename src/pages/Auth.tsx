@@ -67,7 +67,7 @@ export default function Auth() {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-background px-4 py-10">
+    <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto overflow-x-hidden bg-background px-4 py-6">
       {/* Animated neon backdrop */}
       <div className="pointer-events-none absolute inset-0 opacity-70">
         <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-neon-pink/20 blur-3xl" />
@@ -91,30 +91,30 @@ export default function Auth() {
       >
         {/* Card */}
         <div
-          className="rounded-2xl border border-neon-pink/30 bg-card/70 p-8 backdrop-blur-2xl"
+          className="rounded-2xl border border-neon-pink/30 bg-card/70 p-5 sm:p-6 backdrop-blur-2xl"
           style={{ boxShadow: "0 0 60px hsl(330 100% 62% / 0.25), inset 0 0 30px hsl(280 100% 65% / 0.06)" }}
         >
           {/* Brand */}
-          <div className="mb-7 text-center">
+          <div className="mb-4 text-center">
             <motion.div
               initial={{ rotate: -10, scale: 0.8 }}
               animate={{ rotate: 0, scale: 1 }}
               transition={{ type: "spring", stiffness: 180 }}
-              className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-neon-pink/50 bg-secondary/60"
+              className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl border border-neon-pink/50 bg-secondary/60"
               style={{ boxShadow: "0 0 28px hsl(330 100% 62% / 0.55)" }}
             >
-              <Brain className="h-7 w-7 text-neon-pink" />
+              <Brain className="h-6 w-6 text-neon-pink" />
             </motion.div>
             <h1
-              className="text-2xl sm:text-3xl font-black uppercase tracking-[0.18em] text-foreground"
+              className="text-xl sm:text-2xl font-black uppercase tracking-[0.18em] text-foreground"
               style={{ textShadow: "0 0 24px hsl(330 100% 62% / 0.7)" }}
             >
               NEXUS RAG
             </h1>
-            <p className="mt-2 font-mono text-sm sm:text-base uppercase tracking-[0.22em] text-neon-cyan/90">
+            <p className="mt-1.5 font-mono text-xs sm:text-sm uppercase tracking-[0.18em] text-neon-cyan/90">
               RAG System &amp; Agentic AI Workflow
             </p>
-            <div className="mt-4 flex items-center justify-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
               <span className="inline-flex items-center gap-1"><Shield className="h-3 w-3 text-neon-purple" /> Private</span>
               <span className="text-neon-pink/50">·</span>
               <span className="inline-flex items-center gap-1"><Sparkles className="h-3 w-3 text-neon-cyan" /> Agentic</span>
@@ -124,7 +124,7 @@ export default function Auth() {
           </div>
 
           {/* Tabs */}
-          <div className="mb-6 grid grid-cols-2 rounded-xl border border-border bg-secondary/40 p-1">
+          <div className="mb-4 grid grid-cols-2 rounded-xl border border-border bg-secondary/40 p-1">
             {(["signin", "signup"] as Mode[]).map((m) => (
               <button
                 key={m}
@@ -157,7 +157,7 @@ export default function Auth() {
             Continue with Google
           </button>
 
-          <div className="my-5 flex items-center gap-3">
+          <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neon-pink/30 to-transparent" />
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">or email</span>
             <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neon-cyan/30 to-transparent" />
@@ -203,7 +203,7 @@ export default function Auth() {
             </button>
           </form>
 
-          <p className="mt-5 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
             Each session is private · Row-level isolation enforced
           </p>
         </div>
