@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Brain, Mail, Lock, Loader2, Sparkles, Zap, Shield } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,24 +13,36 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const navigate = useNavigate();
 
   const handleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    if (!email || password.length < 6) {
+      toast.error("Enter a valid email and a password (min 6 chars)");
+      return;
+    }
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: { emailRedirectTo: window.location.origin },
         });
         if (error) throw error;
-        toast.success("Account created. You're in!");
+        if (data.session) {
+          toast.success("Account created. Welcome!");
+          navigate("/", { replace: true });
+        } else {
+          toast.success("Check your email to confirm your account, then sign in.");
+          setMode("signin");
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success("Welcome back");
+        navigate("/", { replace: true });
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
