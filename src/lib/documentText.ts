@@ -1,5 +1,6 @@
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import mammoth from "mammoth";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -132,6 +133,9 @@ export async function extractDocumentText(file: File): Promise<string> {
   if (file.type === "application/pdf" || extension === "pdf") {
     const result = await extractPdfWithImages(file);
     extractedText = result.text;
+  } else if (extension === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    extractedText = normalizeExtractedText(result.value || "");
   } else {
     extractedText = normalizeExtractedText(await file.text());
   }
@@ -166,6 +170,12 @@ export async function extractDocumentWithImages(file: File): Promise<{
   }
 
   // Non-PDF files
+  if (extension === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    const text = normalizeExtractedText(result.value || "");
+    return { text, pageImages: [], isImageHeavy: false };
+  }
+
   const text = normalizeExtractedText(await file.text());
   return { text, pageImages: [], isImageHeavy: false };
 }
