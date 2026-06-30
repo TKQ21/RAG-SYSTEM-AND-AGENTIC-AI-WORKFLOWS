@@ -88,16 +88,19 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
       const pageText = mergePdfItems(textContent.items);
       if (pageText) pages.push(pageText);
 
-      // Render page to canvas for vision extraction
+      // Render page to canvas for vision extraction.
+      // Keep payload small: target ~1400px wide max, JPEG q=0.65 — good enough for OCR.
       try {
-        const viewport = page.getViewport({ scale: 1.5 }); // Good quality for OCR
+        const baseViewport = page.getViewport({ scale: 1 });
+        const targetWidth = 1400;
+        const scale = Math.min(2, targetWidth / baseViewport.width);
+        const viewport = page.getViewport({ scale });
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         const ctx = canvas.getContext("2d")!;
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-        // Convert to JPEG base64 (smaller than PNG)
-        const imageData = canvas.toDataURL("image/jpeg", 0.85);
+        const imageData = canvas.toDataURL("image/jpeg", 0.65);
         const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
         pageImages.push(base64Only);
         canvas.remove();
