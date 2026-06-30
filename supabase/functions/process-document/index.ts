@@ -19,6 +19,43 @@ function sanitizeText(text: string): string {
 
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
 
+async function ocrPageImage(base64Jpeg: string): Promise<string> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: "Extract ALL text from this document page exactly as it appears, preserving line breaks, tables, numbers and order. Return only the raw extracted text with no commentary." },
+            { inline_data: { mime_type: "image/jpeg", data: base64Jpeg } },
+          ],
+        }],
+        generationConfig: { temperature: 0 },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("vision ocr failed", res.status, body.slice(0, 200));
+    return "";
+  }
+  const json = await res.json();
+  const parts = json.candidates?.[0]?.content?.parts || [];
+  return parts.map((p: any) => p.text || "").join("\n").trim();
+}
+
+async function ocrPagesInParallel(images: string[], concurrency = 4): Promise<string> {
+  const out: string[] = new Array(images.length).fill("");
+  for (let i = 0; i < images.length; i += concurrency) {
+    const slice = images.slice(i, i + concurrency);
+    const results = await Promise.all(slice.map((img) => ocrPageImage(img).catch(() => "")));
+    results.forEach((t, j) => { out[i + j] = t; });
+  }
+  return out.filter(Boolean).join("\n\n");
+}
+
 async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
   const trimmed = text.slice(0, 8000);
   const res = await fetch(
@@ -89,7 +126,7 @@ serve(async (req) => {
     }
     const userId = userData.user.id;
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { documentName, documentText, mimeType, fileSize } = await req.json();
+    const { documentName, documentText, mimeType, fileSize, pageImages } = await req.json();
 
     if (!documentName || typeof documentName !== "string") {
       return new Response(JSON.stringify({ error: "documentName required" }), {
@@ -98,7 +135,22 @@ serve(async (req) => {
       });
     }
 
-    const fullText = sanitizeText(documentText || "");
+    let fullText = sanitizeText(documentText || "");
+    const images: string[] = Array.isArray(pageImages) ? pageImages : [];
+
+    // Decide if we need OCR: low/no native text but we have rendered page images (scanned PDF)
+    const letterCount = (fullText.match(/[A-Za-z\u00C0-\u024F]/g) || []).length;
+    const avgPerPage = images.length > 0 ? fullText.length / images.length : fullText.length;
+    const needsOcr = images.length > 0 && (fullText.length < 500 || letterCount < 100 || avgPerPage < 100);
+
+    if (needsOcr) {
+      console.log(`OCR fallback: native text ${fullText.length} chars across ${images.length} pages — running Gemini Vision`);
+      const ocrText = await ocrPagesInParallel(images, 4);
+      if (ocrText.length > fullText.length) {
+        fullText = sanitizeText(ocrText);
+      }
+    }
+
     if (fullText.length < 20) {
       return new Response(JSON.stringify({ error: "No readable text extracted" }), {
         status: 400,
