@@ -23,16 +23,31 @@ type RetrievedChunk = {
 const LOVABLE_KEY = Deno.env.get("LOVABLE_API_KEY")!;
 const GATEWAY = "https://ai.gateway.lovable.dev/v1";
 
-async function embed(text: string, _taskType = "RETRIEVAL_QUERY"): Promise<number[] | null> {
-  try {
-    const res = await fetch(`${GATEWAY}/embeddings`, {
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function gatewayFetch(path: string, body: unknown, attempts = 2): Promise<Response> {
+  let last: Response | null = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const res = await fetch(`${GATEWAY}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openai/text-embedding-3-small",
-        input: text.slice(0, 8000),
-        dimensions: 768,
-      }),
+      body: JSON.stringify(body),
+    });
+    if (res.ok || ![429, 500, 502, 503, 504].includes(res.status)) return res;
+    last = res;
+    await wait(700 * (attempt + 1));
+  }
+  return last!;
+}
+
+async function embed(text: string, _taskType = "RETRIEVAL_QUERY"): Promise<number[] | null> {
+  try {
+    const res = await gatewayFetch("/embeddings", {
+      model: "openai/text-embedding-3-small",
+      input: text.slice(0, 8000),
+      dimensions: 768,
     });
     if (!res.ok) {
       console.error("embed failed", res.status, (await res.text()).slice(0, 200));
@@ -43,6 +58,28 @@ async function embed(text: string, _taskType = "RETRIEVAL_QUERY"): Promise<numbe
   } catch (e) {
     console.error("embed err", e);
     return null;
+  }
+}
+
+async function embedMany(texts: string[]): Promise<(number[] | null)[]> {
+  if (!texts.length) return [];
+  try {
+    const res = await gatewayFetch("/embeddings", {
+      model: "openai/text-embedding-3-small",
+      input: texts.map((t) => t.slice(0, 8000)),
+      dimensions: 768,
+    });
+    if (!res.ok) {
+      console.error("embed many failed", res.status, (await res.text()).slice(0, 200));
+      return Promise.all(texts.map((t) => embed(t)));
+    }
+    const json = await res.json();
+    const byIndex = new Map<number, number[]>();
+    for (const item of json.data || []) byIndex.set(item.index ?? 0, item.embedding || null);
+    return texts.map((_, i) => byIndex.get(i) || null);
+  } catch (e) {
+    console.error("embed many err", e);
+    return Promise.all(texts.map((t) => embed(t)));
   }
 }
 
@@ -171,6 +208,44 @@ function buildContext(chunks: RetrievedChunk[]): string {
     .slice(0, 32000);
 }
 
+function escapeSse(text: string): Uint8Array {
+  const payload = `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
+  return new TextEncoder().encode(payload);
+}
+
+function sseTextResponse(text: string): Response {
+  return new Response(new ReadableStream({ start(controller) { controller.enqueue(escapeSse(text)); controller.close(); } }), {
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+  });
+}
+
+function deterministicFallback(question: string, chunks: RetrievedChunk[]): string {
+  if (!chunks.length) return "I could not find a relevant answer in the provided documents.";
+  const q = question.toLowerCase();
+  const context = chunks.map((c) => c.content).join("\n");
+  const source = chunks[0];
+
+  if (/question\s*paper\s*booklet|booklet\s*no|booklet\s*number/i.test(q)) {
+    const match = context.match(/Question\s*Paper\s*Booklet\s*No\.?\s*[:\-]?\s*([A-Za-z0-9]+)/i);
+    if (match) return `Question Paper Booklet No. ${match[1]} hai.\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+  }
+
+  if (/\b(q|question)\s*\d+/i.test(q)) {
+    const asked = q.match(/\b(?:q|question)\s*(\d+)/i)?.[1];
+    if (asked) {
+      const re = new RegExp(`(?:^|\\n|\\s)${asked}\\.\\s*([\\s\\S]{80,1400}?)(?=\\n\\s*${Number(asked) + 1}\\.|\\n\\s*\\(${Number(asked) + 1}\\)|$)`, "i");
+      const found = context.match(re);
+      if (found) return `Q${asked}: ${found[1].trim()}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+    }
+  }
+
+  const best = chunks
+    .slice(0, 3)
+    .map((c) => `From ${c.document_name} Chunk #${c.chunk_index}:\n${c.content.slice(0, 900).trim()}`)
+    .join("\n\n---\n\n");
+  return `${best}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
 async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabase: any, sessionId: string, userId: string) {
   try {
     const reader = stream.getReader();
@@ -209,8 +284,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const LOVABLE = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE) throw new Error("LOVABLE_API_KEY missing");
+    if (!LOVABLE_KEY) throw new Error("LOVABLE_API_KEY missing");
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -244,8 +318,8 @@ serve(async (req) => {
       .filter(Boolean);
     const wordCount = userQuery.split(/\s+/).filter(Boolean).length;
     const looksLikeFollowup =
-      wordCount <= 10 ||
-      /\b(iska|isme|isko|isi|usi|wahi|same|next|previous|pichla|agla|aur|and|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(
+      (wordCount <= 10 && /\b(iska|isko|isi|usi|wahi|same|next|previous|pichla|agla|aur|and|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(userQuery)) ||
+      /\b(iska|isko|isi|usi|wahi|same|next|previous|pichla|agla|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(
         userQuery,
       );
     const retrievalQuery =
@@ -267,10 +341,11 @@ serve(async (req) => {
       );
       const seen = new Map<string, RetrievedChunk>();
 
-      // Parallel embed + match for all variants (was sequential -> slow)
+      // Batch all query variants into one embedding call to reduce rate limits and latency.
+      const variantEmbeddings = await embedMany(variants);
       const variantResults = await Promise.all(
-        variants.map(async (variant) => {
-          const embedding = await embed(variant, "RETRIEVAL_QUERY");
+        variants.map(async (_variant, idx) => {
+          const embedding = variantEmbeddings[idx];
           if (!embedding) return [] as RetrievedChunk[];
           const { data, error } = await supabase.rpc("match_document_chunks", {
             query_embedding: JSON.stringify(embedding) as any,
@@ -380,21 +455,35 @@ serve(async (req) => {
 
     aiMessages.push(...safeMessages);
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: aiMessages,
-        stream: true,
-        temperature: 0,
-        max_tokens: 4096,
-      }),
+    const response = await gatewayFetch("/chat/completions", {
+      model: "google/gemini-2.5-flash-lite",
+      messages: aiMessages,
+      stream: true,
+      temperature: 0,
+      max_tokens: 3072,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error("AI gateway error:", response.status, errorText);
+      if (mode === "documents") {
+        const contextMessage = aiMessages.find((m) => m.role === "system" && m.content.startsWith("[Context]"));
+        if (contextMessage) {
+          const fallbackChunks = Array.from((contextMessage.content.matchAll(/\[Chunk #(\d+) \| File: ([^|]+) \|[^\]]+\]\n([\s\S]*?)(?=\n\n---\n\n\[Chunk #|\n\n\[Conversation so far\]|$)/g)))
+            .slice(0, 8)
+            .map((m, i) => ({
+              id: `fallback-${i}`,
+              document_id: "",
+              document_name: m[2].trim(),
+              chunk_index: Number(m[1]),
+              content: m[3].trim(),
+              similarity: 0,
+            } as RetrievedChunk));
+          const fallbackText = deterministicFallback(userQuery, fallbackChunks);
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: fallbackText, user_id: userId });
+          return sseTextResponse(fallbackText);
+        }
+      }
       const message =
         response.status === 429
           ? "Rate limits exceeded, please try again later."

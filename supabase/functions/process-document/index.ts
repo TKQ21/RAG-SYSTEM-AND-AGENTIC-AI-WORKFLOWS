@@ -20,23 +20,84 @@ function sanitizeText(text: string): string {
 const LOVABLE_KEY = Deno.env.get("LOVABLE_API_KEY")!;
 const GATEWAY = "https://ai.gateway.lovable.dev/v1";
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function gatewayFetch(path: string, body: unknown, attempts = 3): Promise<Response> {
+  let last: Response | null = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const res = await fetch(`${GATEWAY}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok || ![429, 500, 502, 503, 504].includes(res.status)) return res;
+    last = res;
+    await wait(900 * (attempt + 1));
+  }
+  return last!;
+}
+
+async function ocrPageImagesTogether(images: string[]): Promise<string> {
+  if (!images.length) return "";
+  const content: any[] = [
+    {
+      type: "text",
+      text:
+        "Extract ALL readable text from these document page images exactly as it appears. Preserve page order, line breaks, tables, numbers, question numbers, booklet numbers, names and labels. Ignore decorative watermarks/noise. Return only raw extracted text. Prefix each page as: [Page N]",
+    },
+  ];
+  images.forEach((base64Jpeg) => {
+    content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Jpeg}` } });
+  });
+
+  const res = await gatewayFetch("/chat/completions", {
+    model: "google/gemini-2.5-flash-lite",
+    temperature: 0,
+    messages: [{ role: "user", content }],
+  });
+  if (!res.ok) {
+    console.error("vision ocr failed", res.status, (await res.text()).slice(0, 200));
+    return "";
+  }
+  const json = await res.json();
+  return String(json.choices?.[0]?.message?.content || "").trim();
+}
+
+async function embedBatch(texts: string[]): Promise<number[][]> {
+  const inputs = texts.map((text) => text.slice(0, 8000));
+  const res = await gatewayFetch("/embeddings", {
+    model: "openai/text-embedding-3-small",
+    input: inputs,
+    dimensions: 768,
+  });
+  if (!res.ok) {
+    throw new Error(`embed failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  const json = await res.json();
+  const ordered = [...(json.data || [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const vectors = ordered.map((item) => item.embedding as number[]);
+  if (vectors.length !== texts.length) throw new Error(`embedding batch mismatch ${vectors.length}/${texts.length}`);
+  for (const values of vectors) {
+    if (values.length !== 768) throw new Error(`unexpected embedding dim ${values.length}`);
+  }
+  return vectors;
+}
+
 async function ocrPageImage(base64Jpeg: string): Promise<string> {
-  const res = await fetch(`${GATEWAY}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      temperature: 0,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Extract ALL text from this document page exactly as it appears, preserving line breaks, tables, numbers and order. Return only the raw extracted text with no commentary." },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Jpeg}` } },
-          ],
-        },
-      ],
-    }),
+  const res = await gatewayFetch("/chat/completions", {
+    model: "google/gemini-2.5-flash-lite",
+    temperature: 0,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Extract ALL text from this document page exactly as it appears, preserving line breaks, tables, numbers and order. Return only the raw extracted text with no commentary." },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Jpeg}` } },
+        ],
+      },
+    ],
   });
   if (!res.ok) {
     console.error("vision ocr failed", res.status, (await res.text()).slice(0, 200));
@@ -47,6 +108,9 @@ async function ocrPageImage(base64Jpeg: string): Promise<string> {
 }
 
 async function ocrPagesInParallel(images: string[], concurrency = 3): Promise<string> {
+  const combined = await ocrPageImagesTogether(images);
+  if (combined.length > 20) return combined;
+
   const out: string[] = new Array(images.length).fill("");
   for (let i = 0; i < images.length; i += concurrency) {
     const slice = images.slice(i, i + concurrency);
@@ -57,23 +121,8 @@ async function ocrPagesInParallel(images: string[], concurrency = 3): Promise<st
 }
 
 async function embed(text: string, _taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
-  const trimmed = text.slice(0, 8000);
-  const res = await fetch(`${GATEWAY}/embeddings`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
-      input: trimmed,
-      dimensions: 768,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`embed failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  }
-  const json = await res.json();
-  const values: number[] = json.data?.[0]?.embedding || [];
-  if (values.length !== 768) throw new Error(`unexpected embedding dim ${values.length}`);
-  return values;
+  const [vector] = await embedBatch([text]);
+  return vector;
 }
 
 function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
@@ -140,7 +189,7 @@ serve(async (req) => {
 
     if (needsOcr) {
       console.log(`OCR fallback: native text ${fullText.length} chars across ${images.length} pages — running Gemini Vision`);
-      const ocrText = await ocrPagesInParallel(images, 4);
+      const ocrText = await ocrPagesInParallel(images, 2);
       if (ocrText.length > fullText.length) {
         fullText = sanitizeText(ocrText);
       }
@@ -171,8 +220,8 @@ serve(async (req) => {
     const chunks = chunkText(fullText);
     console.log(`"${documentName}": ${chunks.length} chunks`);
 
-    // Process in parallel batches to scale to large documents (~10k pages)
-    const CONCURRENCY = 8;
+    // Batch embeddings into one gateway request per group to avoid rate limits and scale to large documents.
+    const EMBED_BATCH = 32;
     const BATCH_INSERT = 50;
     let stored = 0;
     let cursor = 0;
@@ -192,31 +241,27 @@ serve(async (req) => {
       pendingRows = [];
     };
 
-    for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-      const slice = chunks.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(
-        slice.map(async (content, j) => {
-          try {
-            const embedding = await embed(content, "RETRIEVAL_DOCUMENT");
-            return { content, embedding, idx: i + j };
-          } catch (e) {
-            console.error("embed error chunk", i + j, e);
-            return null;
-          }
-        }),
-      );
-      for (const r of results) {
-        if (!r) continue;
-        const pos = positions[r.idx];
+    for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
+      const slice = chunks.slice(i, i + EMBED_BATCH);
+      let vectors: number[][] = [];
+      try {
+        vectors = await embedBatch(slice);
+      } catch (e) {
+        console.error("embed batch error", i, e);
+        continue;
+      }
+      for (let j = 0; j < slice.length; j += 1) {
+        const idx = i + j;
+        const pos = positions[idx];
         pendingRows.push({
           document_id: doc.id,
           document_name: documentName,
-          chunk_index: r.idx,
-          content: r.content,
-          embedding: JSON.stringify(r.embedding),
+          chunk_index: idx,
+          content: slice[j],
+          embedding: JSON.stringify(vectors[j]),
           page_num: 1,
           start_char: pos.realStart,
-          end_char: pos.realStart + r.content.length,
+          end_char: pos.realStart + slice[j].length,
           user_id: userId,
         });
         if (pendingRows.length >= BATCH_INSERT) await flush();

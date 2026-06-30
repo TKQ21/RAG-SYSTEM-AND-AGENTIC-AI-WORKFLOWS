@@ -209,9 +209,9 @@ export function useAgentChat(userId: string | null) {
 
       // Decide if OCR is needed up front to avoid sending heavy images when not required
       const needsOcr = isImageHeavy && pageImages.length > 0;
-      // For the initial request, send at most 4 images (keeps payload < ~3MB)
+      // For OCR, send enough scanned pages while keeping the request body safe.
       if (needsOcr) {
-        body.pageImages = pageImages.slice(0, 4);
+        body.pageImages = pageImages.slice(0, 12);
       }
 
       const resp = await fetch(PROCESS_URL, {
