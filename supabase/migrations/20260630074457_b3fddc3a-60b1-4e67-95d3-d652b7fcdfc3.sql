@@ -1,0 +1,1 @@
+TRUNCATE TABLE public.document_chunks; TRUNCATE TABLE public.documents CASCADE;
