@@ -20,29 +20,26 @@ type RetrievedChunk = {
   hybridScore?: number;
 };
 
-const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
+const LOVABLE_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+const GATEWAY = "https://ai.gateway.lovable.dev/v1";
 
-async function embed(text: string, taskType = "RETRIEVAL_QUERY"): Promise<number[] | null> {
+async function embed(text: string, _taskType = "RETRIEVAL_QUERY"): Promise<number[] | null> {
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "models/gemini-embedding-001",
-          content: { parts: [{ text: text.slice(0, 8000) }] },
-          taskType,
-          outputDimensionality: 768,
-        }),
-      },
-    );
+    const res = await fetch(`${GATEWAY}/embeddings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openai/text-embedding-3-small",
+        input: text.slice(0, 8000),
+        dimensions: 768,
+      }),
+    });
     if (!res.ok) {
       console.error("embed failed", res.status, (await res.text()).slice(0, 200));
       return null;
     }
     const json = await res.json();
-    return json.embedding?.values || null;
+    return json.data?.[0]?.embedding || null;
   } catch (e) {
     console.error("embed err", e);
     return null;
