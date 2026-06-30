@@ -207,9 +207,11 @@ export function useAgentChat(userId: string | null) {
         fileSize: file.size,
       };
 
-      // Send page images for vision extraction (limit to 10 pages to keep payload reasonable)
-      if (pageImages.length > 0) {
-        body.pageImages = pageImages.slice(0, 10);
+      // Decide if OCR is needed up front to avoid sending heavy images when not required
+      const needsOcr = isImageHeavy && pageImages.length > 0;
+      // For the initial request, send at most 4 images (keeps payload < ~3MB)
+      if (needsOcr) {
+        body.pageImages = pageImages.slice(0, 4);
       }
 
       const resp = await fetch(PROCESS_URL, {
