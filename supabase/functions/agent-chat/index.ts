@@ -342,10 +342,11 @@ serve(async (req) => {
       );
       const seen = new Map<string, RetrievedChunk>();
 
-      // Parallel embed + match for all variants (was sequential -> slow)
+      // Batch all query variants into one embedding call to reduce rate limits and latency.
+      const variantEmbeddings = await embedMany(variants);
       const variantResults = await Promise.all(
-        variants.map(async (variant) => {
-          const embedding = await embed(variant, "RETRIEVAL_QUERY");
+        variants.map(async (_variant, idx) => {
+          const embedding = variantEmbeddings[idx];
           if (!embedding) return [] as RetrievedChunk[];
           const { data, error } = await supabase.rpc("match_document_chunks", {
             query_embedding: JSON.stringify(embedding) as any,
@@ -455,21 +456,35 @@ serve(async (req) => {
 
     aiMessages.push(...safeMessages);
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: aiMessages,
-        stream: true,
-        temperature: 0,
-        max_tokens: 4096,
-      }),
+    const response = await gatewayFetch("/chat/completions", {
+      model: "google/gemini-2.5-flash-lite",
+      messages: aiMessages,
+      stream: true,
+      temperature: 0,
+      max_tokens: 3072,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error("AI gateway error:", response.status, errorText);
+      if (mode === "documents") {
+        const contextMessage = aiMessages.find((m) => m.role === "system" && m.content.startsWith("[Context]"));
+        if (contextMessage) {
+          const fallbackChunks = Array.from((contextMessage.content.matchAll(/\[Chunk #(\d+) \| File: ([^|]+) \|[^\]]+\]\n([\s\S]*?)(?=\n\n---\n\n\[Chunk #|\n\n\[Conversation so far\]|$)/g)))
+            .slice(0, 8)
+            .map((m, i) => ({
+              id: `fallback-${i}`,
+              document_id: "",
+              document_name: m[2].trim(),
+              chunk_index: Number(m[1]),
+              content: m[3].trim(),
+              similarity: 0,
+            } as RetrievedChunk));
+          const fallbackText = deterministicFallback(userQuery, fallbackChunks);
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: fallbackText, user_id: userId });
+          return sseTextResponse(fallbackText);
+        }
+      }
       const message =
         response.status === 429
           ? "Rate limits exceeded, please try again later."
