@@ -318,8 +318,8 @@ serve(async (req) => {
       .filter(Boolean);
     const wordCount = userQuery.split(/\s+/).filter(Boolean).length;
     const looksLikeFollowup =
-      wordCount <= 10 ||
-      /\b(iska|isme|isko|isi|usi|wahi|same|next|previous|pichla|agla|aur|and|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(
+      (wordCount <= 10 && /\b(iska|isko|isi|usi|wahi|same|next|previous|pichla|agla|aur|and|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(userQuery)) ||
+      /\b(iska|isko|isi|usi|wahi|same|next|previous|pichla|agla|hindi|english|translate|anuvad|point|line|paragraph|detail|explain|expand|summarise|summary|short|long)\b/i.test(
         userQuery,
       );
     const retrievalQuery =
