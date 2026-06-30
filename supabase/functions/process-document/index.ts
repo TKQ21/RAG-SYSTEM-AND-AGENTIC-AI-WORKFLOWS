@@ -17,36 +17,36 @@ function sanitizeText(text: string): string {
     .trim();
 }
 
-const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
+const LOVABLE_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+const GATEWAY = "https://ai.gateway.lovable.dev/v1";
 
 async function ocrPageImage(base64Jpeg: string): Promise<string> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: "Extract ALL text from this document page exactly as it appears, preserving line breaks, tables, numbers and order. Return only the raw extracted text with no commentary." },
-            { inline_data: { mime_type: "image/jpeg", data: base64Jpeg } },
+  const res = await fetch(`${GATEWAY}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      temperature: 0,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Extract ALL text from this document page exactly as it appears, preserving line breaks, tables, numbers and order. Return only the raw extracted text with no commentary." },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Jpeg}` } },
           ],
-        }],
-        generationConfig: { temperature: 0 },
-      }),
-    },
-  );
+        },
+      ],
+    }),
+  });
   if (!res.ok) {
-    const body = await res.text();
-    console.error("vision ocr failed", res.status, body.slice(0, 200));
+    console.error("vision ocr failed", res.status, (await res.text()).slice(0, 200));
     return "";
   }
   const json = await res.json();
-  const parts = json.candidates?.[0]?.content?.parts || [];
-  return parts.map((p: any) => p.text || "").join("\n").trim();
+  return String(json.choices?.[0]?.message?.content || "").trim();
 }
 
-async function ocrPagesInParallel(images: string[], concurrency = 4): Promise<string> {
+async function ocrPagesInParallel(images: string[], concurrency = 3): Promise<string> {
   const out: string[] = new Array(images.length).fill("");
   for (let i = 0; i < images.length; i += concurrency) {
     const slice = images.slice(i, i + concurrency);
@@ -56,27 +56,22 @@ async function ocrPagesInParallel(images: string[], concurrency = 4): Promise<st
   return out.filter(Boolean).join("\n\n");
 }
 
-async function embed(text: string, taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
+async function embed(text: string, _taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
   const trimmed = text.slice(0, 8000);
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "models/gemini-embedding-001",
-        content: { parts: [{ text: trimmed }] },
-        taskType,
-          outputDimensionality: 768,
-      }),
-    },
-  );
+  const res = await fetch(`${GATEWAY}/embeddings`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "openai/text-embedding-3-small",
+      input: trimmed,
+      dimensions: 768,
+    }),
+  });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`embed failed ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`embed failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
   const json = await res.json();
-  const values: number[] = json.embedding?.values || [];
+  const values: number[] = json.data?.[0]?.embedding || [];
   if (values.length !== 768) throw new Error(`unexpected embedding dim ${values.length}`);
   return values;
 }
