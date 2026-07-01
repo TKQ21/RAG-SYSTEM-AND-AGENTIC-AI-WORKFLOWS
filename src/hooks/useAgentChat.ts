@@ -207,11 +207,9 @@ export function useAgentChat(userId: string | null) {
         fileSize: file.size,
       };
 
-      // Decide if OCR is needed up front to avoid sending heavy images when not required
-      const needsOcr = isImageHeavy && pageImages.length > 0;
-      // For OCR, send enough scanned pages while keeping the request body safe.
-      if (needsOcr) {
-        body.pageImages = pageImages.slice(0, 12);
+      // June 5 behavior: always send PDF page images so the backend can OCR scanned/visual PDFs when needed.
+      if (pageImages.length > 0) {
+        body.pageImages = pageImages.slice(0, 10);
       }
 
       const resp = await fetch(PROCESS_URL, {

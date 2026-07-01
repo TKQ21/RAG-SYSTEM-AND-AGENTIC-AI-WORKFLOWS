@@ -181,7 +181,7 @@ function strictPrompt(): string {
 CRITICAL RULES:
 1. Answer ONLY from [Context]. Never use outside knowledge.
 2. Understand the user's semantic intent in English/Hindi/Hinglish, then map it to the relevant context chunks.
-3. If the answer is not in the context, say exactly: "I could not find a relevant answer in the provided documents."
+3. If relevant context chunks are provided, DO NOT reject the question just because the user's wording is imperfect. Answer with the closest exact fields/lines available in the context and clearly say which requested field is not present. Only say "I could not find a relevant answer in the provided documents." when the context has no related information at all.
 4. If multiple values exist, list ALL of them with exact labels.
 5. POWER BI / CHART TABLES: exported text from Power BI charts is UNRELIABLE for index alignment because bars are usually drawn sorted by VALUE DESCENDING while the legend keeps a different order. NEVER assume label[i] pairs with value[i]. Instead:
    (a) Find the chart title (e.g. "Survival rate by Age Group").
@@ -192,8 +192,9 @@ CRITICAL RULES:
 6. For "about / biography / introduction / overview / who is / kaun hai / bare mai / baare mai" questions, return EVERY biographical sentence in the context (birth, family, education, career, awards, philanthropy). Do NOT truncate, do NOT summarise — copy verbatim and stitch consecutive chunks. Aim for a complete multi-paragraph answer (200+ words) when the source has it.
 7. Keep answers concise (2-4 sentences) ONLY for narrow single-fact questions. For "about / list / all / full / summary / detail" questions give the complete answer.
 8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
-9. If the user says "admit card", "person", "candidate", "student", "naam/name", and the context has a marksheet/result/statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course fields instead of rejecting it.
-10. End every answer with citations, max 3, one per line:
+9. If the user says "admit card", "hall ticket", "person", "candidate", "student", "naam/name", and the context has an admit card / hall ticket / marksheet / result / statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course / Exam Centre / Paper Details fields instead of rejecting it.
+10. If the user asks for subjects + grades but the context is an admit card/hall ticket with Paper Details and no grades, list the paper/subject details exactly and state: "Grades/result status is not present in this document."
+11. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
@@ -219,8 +220,79 @@ function sseTextResponse(text: string): Response {
   });
 }
 
+function uniqueLines(text: string): string[] {
+  const seen = new Set<string>();
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => {
+      if (!line || seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    });
+}
+
+function fieldValue(context: string, label: string): string | null {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = context.match(new RegExp(`(?:^|\\n)\\s*${escaped}\\s*[:\\-]\\s*([^\\n]+)`, "i"));
+  return match?.[1]?.replace(/\s+/g, " ").trim() || null;
+}
+
+function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): string | null {
+  if (!chunks.length) return null;
+  const q = question.toLowerCase();
+  const ordered = [...chunks].sort((a, b) => {
+    if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+    return (b.hybridScore || b.similarity || 0) - (a.hybridScore || a.similarity || 0);
+  });
+  const context = ordered.map((c) => c.content).join("\n");
+  const source = ordered[0];
+
+  const wantsIdentity = /\b(admit\s*card|hall\s*ticket|person|candidate|student|naam|name|kiska|kis\s+person|roll|enrollment|father|course|centre|center)\b/i.test(q);
+  const wantsPapers = /\b(subjects?|papers?|exam\s*code|examcode|grades?|result|marks?|paper\s*details)\b/i.test(q);
+
+  if (!wantsIdentity && !wantsPapers) return null;
+
+  const fields: string[] = [];
+  const fieldLabels = ["Name", "Sol Roll No.", "SOL Roll No.", "Exam Roll No.", "Enrollment No.", "Father's Name", "Course Name", "Exam Centre"];
+  const used = new Set<string>();
+  for (const label of fieldLabels) {
+    const value = fieldValue(context, label);
+    const cleanLabel = label.replace("SOL", "Sol");
+    if (value && !used.has(cleanLabel.toLowerCase())) {
+      used.add(cleanLabel.toLowerCase());
+      fields.push(`- ${cleanLabel}: ${value}`);
+    }
+  }
+
+  let paperLines: string[] = [];
+  const paperMatch = context.match(/Paper\s+Details[\s\S]{0,2600}?(?=Instructions\s*\/|Principal|Controller of Examinations|$)/i);
+  if (paperMatch) {
+    paperLines = uniqueLines(paperMatch[0])
+      .filter((line) => !/^Paper Details\s*$/i.test(line))
+      .slice(0, 28);
+  } else if (wantsPapers) {
+    paperLines = uniqueLines(context)
+      .filter((line) => /(commerce|hindi|english|computer science|bba|accounting|law|management|investment|flutter|examcode|\b\d{10}\b)/i.test(line))
+      .slice(0, 28);
+  }
+
+  if (!fields.length && !paperLines.length) return null;
+
+  const parts: string[] = [];
+  if (fields.length) parts.push(`Exact student/person details found:\n${fields.join("\n")}`);
+  if (paperLines.length) parts.push(`Exact paper/subject details found:\n${paperLines.map((line) => `- ${line}`).join("\n")}`);
+  if (/\b(grades?|result|marks?)\b/i.test(q) && !/\b(grade|sgpa|cgpa|result|marks?)\b/i.test(paperLines.join(" "))) {
+    parts.push("Grades/result status is not present in this document.");
+  }
+
+  return `${parts.join("\n\n")}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
 function deterministicFallback(question: string, chunks: RetrievedChunk[]): string {
   if (!chunks.length) return "I could not find a relevant answer in the provided documents.";
+  const exact = exactStructuredAnswer(question, chunks);
+  if (exact) return exact;
   const q = question.toLowerCase();
   const context = chunks.map((c) => c.content).join("\n");
   const source = chunks[0];
@@ -439,11 +511,17 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const exactAnswer = exactStructuredAnswer(userQuery, chunks);
+        if (exactAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: exactAnswer, user_id: userId });
+          return sseTextResponse(exactAnswer);
+        }
+
         aiMessages.push({
           role: "system",
           content: `[Context]\n${buildContext(chunks)}\n\n[Conversation so far]\n${previousUserTurns
             .map((q, i) => `User${i + 1}: ${q}`)
-            .join("\n")}\n\n[Current User Question]\n${userQuery}\n\n[Instruction]\nThe current question may be a short follow-up — resolve any pronouns/ellipsis using the conversation so far (e.g. "4th point in hindi" means translate the 4th instruction of the same document discussed earlier). Answer using ONLY the context above. If asked to translate or rephrase a specific point/line/paragraph from the document, locate it precisely in the context and produce it. If truly absent, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
+            .join("\n")}\n\n[Current User Question]\n${userQuery}\n\n[Instruction]\nThe current question may be a short follow-up — resolve any pronouns/ellipsis using the conversation so far (e.g. "4th point in hindi" means translate the 4th instruction of the same document discussed earlier). Answer using ONLY the context above. If asked to translate or rephrase a specific point/line/paragraph from the document, locate it precisely in the context and produce it. If the context is related but an exact requested field is missing, still answer with the closest exact lines and say what is missing. If truly absent, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
         });
       } else {
         aiMessages.push({
@@ -456,11 +534,11 @@ serve(async (req) => {
     aiMessages.push(...safeMessages);
 
     const response = await gatewayFetch("/chat/completions", {
-      model: "google/gemini-2.5-flash-lite",
+      model: "google/gemini-2.5-flash",
       messages: aiMessages,
       stream: true,
       temperature: 0,
-      max_tokens: 3072,
+      max_tokens: 4096,
     });
 
     if (!response.ok) {

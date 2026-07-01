@@ -79,7 +79,7 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
   try {
     const pages: string[] = [];
     const pageImages: string[] = [];
-    const maxPages = Math.min(pdf.numPages, 50); // Cap rendered previews for OCR payload safety
+    const maxPages = Math.min(pdf.numPages, 30); // June 5 behavior: render strong OCR previews, capped for payload safety
 
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
@@ -89,19 +89,15 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
       const pageText = mergePdfItems(textContent.items);
       if (pageText) pages.push(pageText);
 
-      // Render page to canvas for vision extraction.
-      // Keep payload small enough for backend OCR while preserving readable text.
+      // Render page to canvas for vision extraction. Keep June 5 OCR quality so scanned PDFs stay readable.
       try {
-        const baseViewport = page.getViewport({ scale: 1 });
-        const targetWidth = 1000;
-        const scale = Math.min(1.5, targetWidth / baseViewport.width);
-        const viewport = page.getViewport({ scale });
+        const viewport = page.getViewport({ scale: 1.5 });
         const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         const ctx = canvas.getContext("2d")!;
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-        const imageData = canvas.toDataURL("image/jpeg", 0.5);
+        const imageData = canvas.toDataURL("image/jpeg", 0.85);
         const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
         pageImages.push(base64Only);
         canvas.remove();
