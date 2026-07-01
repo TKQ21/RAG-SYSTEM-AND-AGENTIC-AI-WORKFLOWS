@@ -511,11 +511,17 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const exactAnswer = exactStructuredAnswer(userQuery, chunks);
+        if (exactAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: exactAnswer, user_id: userId });
+          return sseTextResponse(exactAnswer);
+        }
+
         aiMessages.push({
           role: "system",
           content: `[Context]\n${buildContext(chunks)}\n\n[Conversation so far]\n${previousUserTurns
             .map((q, i) => `User${i + 1}: ${q}`)
-            .join("\n")}\n\n[Current User Question]\n${userQuery}\n\n[Instruction]\nThe current question may be a short follow-up — resolve any pronouns/ellipsis using the conversation so far (e.g. "4th point in hindi" means translate the 4th instruction of the same document discussed earlier). Answer using ONLY the context above. If asked to translate or rephrase a specific point/line/paragraph from the document, locate it precisely in the context and produce it. If truly absent, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
+            .join("\n")}\n\n[Current User Question]\n${userQuery}\n\n[Instruction]\nThe current question may be a short follow-up — resolve any pronouns/ellipsis using the conversation so far (e.g. "4th point in hindi" means translate the 4th instruction of the same document discussed earlier). Answer using ONLY the context above. If asked to translate or rephrase a specific point/line/paragraph from the document, locate it precisely in the context and produce it. If the context is related but an exact requested field is missing, still answer with the closest exact lines and say what is missing. If truly absent, say "I could not find a relevant answer in the provided documents." End with 📌 citations.`,
         });
       } else {
         aiMessages.push({
@@ -528,11 +534,11 @@ serve(async (req) => {
     aiMessages.push(...safeMessages);
 
     const response = await gatewayFetch("/chat/completions", {
-      model: "google/gemini-2.5-flash-lite",
+      model: "google/gemini-2.5-flash",
       messages: aiMessages,
       stream: true,
       temperature: 0,
-      max_tokens: 3072,
+      max_tokens: 4096,
     });
 
     if (!response.ok) {
