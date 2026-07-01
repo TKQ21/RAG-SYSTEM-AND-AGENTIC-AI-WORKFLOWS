@@ -53,7 +53,7 @@ async function ocrPageImagesTogether(images: string[]): Promise<string> {
   });
 
   const res = await gatewayFetch("/chat/completions", {
-    model: "google/gemini-2.5-flash-lite",
+    model: "google/gemini-2.5-flash",
     temperature: 0,
     messages: [{ role: "user", content }],
   });
@@ -87,7 +87,7 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
 
 async function ocrPageImage(base64Jpeg: string): Promise<string> {
   const res = await gatewayFetch("/chat/completions", {
-    model: "google/gemini-2.5-flash-lite",
+    model: "google/gemini-2.5-flash",
     temperature: 0,
     messages: [
       {
@@ -182,7 +182,7 @@ serve(async (req) => {
     let fullText = sanitizeText(documentText || "");
     const images: string[] = Array.isArray(pageImages) ? pageImages : [];
 
-    // Decide if we need OCR: low/no native text but we have rendered page images (scanned PDF)
+    // Decide if we need OCR: scanned/visual PDFs need Vision, while text PDFs can use native text.
     const letterCount = (fullText.match(/[A-Za-z\u00C0-\u024F]/g) || []).length;
     const avgPerPage = images.length > 0 ? fullText.length / images.length : fullText.length;
     const needsOcr = images.length > 0 && (fullText.length < 500 || letterCount < 100 || avgPerPage < 100);
