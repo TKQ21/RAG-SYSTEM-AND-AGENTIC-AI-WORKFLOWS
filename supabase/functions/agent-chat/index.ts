@@ -620,6 +620,12 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const posAnswer = positionAnswer(userQuery, chunks, previousUserTurns);
+        if (posAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: posAnswer, user_id: userId });
+          return sseTextResponse(posAnswer);
+        }
+
         const exactAnswer = exactStructuredAnswer(userQuery, chunks);
         if (exactAnswer) {
           if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: exactAnswer, user_id: userId });
