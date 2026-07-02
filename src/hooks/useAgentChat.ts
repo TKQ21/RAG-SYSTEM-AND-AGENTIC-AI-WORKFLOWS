@@ -11,8 +11,9 @@ const PROCESS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-d
 
 function getSessionId(userId: string | null): string {
   const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
-  let sid = sessionStorage.getItem(key);
-  if (!sid) { sid = generateId() + generateId(); sessionStorage.setItem(key, sid); }
+  // Persist across browser sessions so chat history isn't lost until user deletes it
+  let sid = localStorage.getItem(key);
+  if (!sid) { sid = generateId() + generateId(); localStorage.setItem(key, sid); }
   return sid;
 }
 
@@ -30,7 +31,9 @@ export function useAgentChat(userId: string | null) {
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [totalChunks, setTotalChunks] = useState(0);
   const [totalQueries, setTotalQueries] = useState(0);
-  const sessionId = getSessionId(userId);
+  const [sessionId, setSessionId] = useState(() => getSessionId(userId));
+
+  useEffect(() => { setSessionId(getSessionId(userId)); }, [userId]);
 
   // Load chat history + documents on mount (per user, RLS scoped)
   useEffect(() => {
@@ -240,11 +243,16 @@ export function useAgentChat(userId: string | null) {
     await supabase.from("document_chunks").delete().eq("document_id", id);
     await supabase.from("documents").delete().eq("id", id);
     const { data } = await supabase.from("documents").select("chunk_count");
-    setTotalChunks((data || []).reduce((s: number, d: any) => s + (d.chunk_count || 0), 0));
+    const remaining = (data || []).reduce((s: number, d: any) => s + (d.chunk_count || 0), 0);
+    setTotalChunks(remaining);
+    // Reset the queries counter when there are no documents left
+    if (!data || data.length === 0) setTotalQueries(0);
   }, []);
 
   const loadSession = useCallback(async (sid: string) => {
-    sessionStorage.setItem("rag_session_id", sid);
+    const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
+    localStorage.setItem(key, sid);
+    setSessionId(sid);
     const { data } = await supabase
       .from("chat_history")
       .select("*")
@@ -261,7 +269,16 @@ export function useAgentChat(userId: string | null) {
     } else {
       setMessages([]);
     }
-  }, []);
+  }, [userId]);
 
-  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession };
+  const newChat = useCallback(() => {
+    const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
+    const fresh = generateId() + generateId();
+    localStorage.setItem(key, fresh);
+    setSessionId(fresh);
+    setMessages([]);
+    setCurrentSteps([]);
+  }, [userId]);
+
+  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat };
 }
