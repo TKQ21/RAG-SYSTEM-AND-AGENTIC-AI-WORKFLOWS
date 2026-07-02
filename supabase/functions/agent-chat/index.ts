@@ -196,10 +196,11 @@ CRITICAL RULES:
 10. If the user asks for subjects + grades but the context is an admit card/hall ticket with Paper Details and no grades, list the paper/subject details exactly and state: "Grades/result status is not present in this document."
 11. POSITION QUERIES ("Nth word", "Nth letter", "kth character", "word #N of question X", "case scenario X qN mai N-th word"):
     (a) Locate the exact target sentence/question from the context verbatim (e.g., Question 9 in Case Scenario IV).
-    (b) Tokenize by splitting on whitespace for words, and by character index for letters. Punctuation stays attached to the word it touches unless the user asks for "letter/character".
-    (c) Count strictly from 1 (1-based). Do NOT skip articles, numbers, or symbols.
-    (d) Reply in this exact format: 'The Nth word of <target> is "<word>". Full sentence: "<sentence>". Tokens: 1) <w1> 2) <w2> ...'  so the user can verify the count.
-    (e) If the target sentence isn't clearly present, say "The exact sentence for <target> is not in the retrieved context." — do NOT guess.
+    (b) Tokenize by splitting ONLY on whitespace. Compound tokens joined by "/" or "-" (e.g. "his/her", "40-50", "father-in-law") count as ONE word. Punctuation stays attached to the word it touches unless the user asks for "letter/character".
+    (c) When the target is "Q.N / Question N / point N / instruction N / step N", DROP the leading label token (Q.4, 4., (4), Question 4) before counting — the user's Nth word is the Nth word of the actual sentence, not of the label.
+    (d) Count strictly from 1 (1-based). Do NOT skip articles, numbers, or symbols inside the sentence.
+    (e) Reply in this exact format: 'The Nth word of <target> is "<word>". Full sentence: "<sentence>". Tokens: 1) <w1> 2) <w2> ...'  so the user can verify the count.
+    (f) If the target sentence isn't clearly present, say "The exact sentence for <target> is not in the retrieved context." — do NOT guess.
 12. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
@@ -293,6 +294,108 @@ function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): stri
   }
 
   return `${parts.join("\n\n")}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
+function ordSuffix(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
+}
+
+// Deterministic Nth-word / Nth-letter solver. Runs BEFORE the LLM so counting
+// is exact and stable (LLMs miscount tokens like "his/her" or skip "Q.4").
+function positionAnswer(
+  question: string,
+  chunks: RetrievedChunk[],
+  previousUserTurns: string[] = [],
+): string | null {
+  if (!chunks.length) return null;
+  const qOrig = question || "";
+  const combined = `${previousUserTurns.join(" \n ")} \n ${qOrig}`.trim();
+  const q = qOrig.toLowerCase();
+  const cq = combined.toLowerCase();
+
+  // Detect position + unit. Support: "5 word", "8th word", "word 5", "5 letter", "5 shabd", "5 akshar".
+  let n = 0;
+  let unit: "word" | "letter" = "word";
+  const m1 = q.match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*(word|shabd|letter|character|char|akshar)\b/);
+  const m2 = q.match(/\b(word|shabd|letter|character|char|akshar)\s*(?:#|number|no\.?)?\s*(\d+)\b/);
+  if (m1) { n = parseInt(m1[1], 10); unit = /letter|character|char|akshar/.test(m1[2]) ? "letter" : "word"; }
+  else if (m2) { n = parseInt(m2[2], 10); unit = /letter|character|char|akshar/.test(m2[1]) ? "letter" : "word"; }
+  else return null;
+  if (!n || n < 1) return null;
+
+  // Detect target descriptor. Look in current + previous turns so short follow-ups work.
+  const searchIn = cq;
+  const qNum = searchIn.match(/\b(?:q|question|prashn)\.?\s*(\d+)/)?.[1] || null;
+  const pointKindMatch = searchIn.match(/\b(point|instruction|step|rule|item|line|para|paragraph)\s*(?:no\.?|number|#)?\s*(\d+)/);
+  const pointNum = pointKindMatch?.[2] || null;
+  const pointKind = pointKindMatch?.[1] || null;
+
+  const ordered = [...chunks].sort((a, b) => {
+    if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+    return (b.hybridScore || b.similarity || 0) - (a.hybridScore || a.similarity || 0);
+  });
+  const context = ordered.map((c) => c.content).join("\n");
+  const src = ordered[0];
+
+  let sentence: string | null = null;
+  let label = "the target sentence";
+
+  if (qNum) {
+    label = `Q.${qNum}`;
+    const next = String(parseInt(qNum, 10) + 1);
+    const re = new RegExp(
+      `(?:^|\\n)\\s*(?:Q\\.?\\s*${qNum}|Question\\s+${qNum})[\\.\\):\\-\\s]+([\\s\\S]*?)(?=\\n\\s*(?:Q\\.?\\s*${next}\\b|Question\\s+${next}\\b)|\\n\\s*\\n|$)`,
+      "i",
+    );
+    const m = context.match(re);
+    if (m) sentence = m[1].trim();
+    if (!sentence) {
+      const any = context.match(new RegExp(`\\b(?:Q\\.?\\s*${qNum}|Question\\s+${qNum})[\\.\\):\\-\\s]+([^\\n]{5,800})`, "i"));
+      if (any) sentence = any[1].trim();
+    }
+  } else if (pointNum && pointKind) {
+    label = `${pointKind} ${pointNum}`;
+    const next = String(parseInt(pointNum, 10) + 1);
+    // Numbered list item: "3. ...", "3) ...", "(3) ..."
+    const re = new RegExp(
+      `(?:^|\\n)\\s*\\(?${pointNum}[\\.\\)]\\s+([\\s\\S]*?)(?=\\n\\s*\\(?${next}[\\.\\)]\\s|\\n\\s*\\n|$)`,
+    );
+    const m = context.match(re);
+    if (m) sentence = m[1].trim();
+  } else {
+    return null; // no clear target — let the LLM handle it
+  }
+
+  if (!sentence) return null;
+
+  // Keep just the first paragraph/line of the matched item.
+  sentence = sentence.split(/\n{2,}/)[0].split(/\n/)[0].trim();
+  if (!sentence) return null;
+
+  if (unit === "letter") {
+    const clean = sentence.replace(/\s+/g, "");
+    if (n > clean.length) {
+      return `${label} has only ${clean.length} letters — cannot get letter #${n}.\n\nFull sentence: "${sentence}"\n\n📌 Source: ${src.document_name} | Chunk #${src.chunk_index}`;
+    }
+    return `The ${n}${ordSuffix(n)} letter of ${label} is "${clean[n - 1]}".\n\nFull sentence: "${sentence}"\n\n📌 Source: ${src.document_name} | Chunk #${src.chunk_index}`;
+  }
+
+  // Word tokenize: split on whitespace only. his/her, 40-50, father-in-law stay as ONE token.
+  let tokens = sentence.split(/\s+/).filter(Boolean);
+  // Drop leading label token: Q.4 | Q4 | Question | 4. | 4) | (4)
+  if (tokens.length) {
+    if (/^(?:Q\.?\d+|Q\.?|Question|\(?\d+[.)])$/i.test(tokens[0])) tokens = tokens.slice(1);
+    // Handle split cases like ["Q.", "4", "Write", ...] or ["Question", "4", "Write", ...]
+    if (tokens.length && /^(Q\.?|Question)$/i.test(tokens[0]) && /^\d+[.)]?$/.test(tokens[1] || "")) tokens = tokens.slice(2);
+  }
+  if (n > tokens.length) {
+    return `${label} has only ${tokens.length} words — cannot get word #${n}.\n\nFull sentence: "${sentence}"\n\n📌 Source: ${src.document_name} | Chunk #${src.chunk_index}`;
+  }
+  const word = tokens[n - 1].replace(/^[",.;:()\[\]]+|[",.;:()\[\]]+$/g, "") || tokens[n - 1];
+  const numbered = tokens.map((t, i) => `${i + 1}) ${t}`).join(" ");
+  return `The ${n}${ordSuffix(n)} word of ${label} is "${word}".\n\nFull sentence: "${sentence}"\n\nTokens: ${numbered}\n\n📌 Source: ${src.document_name} | Chunk #${src.chunk_index}`;
 }
 
 function deterministicFallback(question: string, chunks: RetrievedChunk[]): string {
@@ -517,6 +620,12 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const posAnswer = positionAnswer(userQuery, chunks, previousUserTurns);
+        if (posAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: posAnswer, user_id: userId });
+          return sseTextResponse(posAnswer);
+        }
+
         const exactAnswer = exactStructuredAnswer(userQuery, chunks);
         if (exactAnswer) {
           if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: exactAnswer, user_id: userId });
