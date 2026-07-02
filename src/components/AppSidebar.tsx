@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X } from "lucide-react";
+import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
@@ -24,6 +24,7 @@ interface SidebarProps {
   totalChunks: number;
   totalQueries: number;
   onOpenHistory?: () => void;
+  onNewChat?: () => void;
   onCloseMobile?: () => void;
 }
 
@@ -34,7 +35,7 @@ const STAT_STYLES = [
   { label: "Queries", border: "border-neon-yellow/40", text: "text-neon-yellow", glow: "0 0 14px hsl(48 100% 60% / 0.18)" },
 ];
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onCloseMobile }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onNewChat, onCloseMobile }: SidebarProps) {
   const statValues = [
     documents.length,
     documents.reduce((s, d) => s + (d.chunks || 0), 0),
@@ -54,6 +55,9 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           <h1 className="text-xs font-black uppercase tracking-wider text-foreground">RAG System & Agentic AI Workflow</h1>
           <p className="font-mono text-[10px] text-muted-foreground">Agentic Intelligence · Zero Hallucination</p>
         </div>
+        <button onClick={onNewChat} className="rounded-lg border border-neon-cyan/30 p-2 text-neon-cyan/80 hover:bg-neon-cyan/10 hover:text-neon-cyan transition-all" style={{ boxShadow: "0 0 10px hsl(185 100% 50% / 0.25)" }} title="New Chat">
+          <Plus className="h-4 w-4" />
+        </button>
         <button onClick={onOpenHistory} className="rounded-lg border border-neon-pink/30 p-2 text-neon-pink/80 hover:bg-neon-pink/10 hover:text-neon-pink transition-all" style={{ boxShadow: "0 0 10px hsl(330 100% 62% / 0.2)" }} title="Chat History">
           <History className="h-4 w-4" />
         </button>

@@ -41,7 +41,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
   const {
     messages, isProcessing, currentSteps, mode, setMode,
     documents, sendMessage, uploadDocument, removeDocument,
-    totalChunks, totalQueries, sessionId, loadSession,
+    totalChunks, totalQueries, sessionId, loadSession, newChat,
   } = useAgentChat(userId);
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -107,6 +107,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
           totalChunks={totalChunks}
           totalQueries={totalQueries}
           onOpenHistory={() => setHistoryOpen(true)}
+          onNewChat={newChat}
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
       </div>

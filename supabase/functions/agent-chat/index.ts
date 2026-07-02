@@ -194,7 +194,13 @@ CRITICAL RULES:
 8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
 9. If the user says "admit card", "hall ticket", "person", "candidate", "student", "naam/name", and the context has an admit card / hall ticket / marksheet / result / statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course / Exam Centre / Paper Details fields instead of rejecting it.
 10. If the user asks for subjects + grades but the context is an admit card/hall ticket with Paper Details and no grades, list the paper/subject details exactly and state: "Grades/result status is not present in this document."
-11. End every answer with citations, max 3, one per line:
+11. POSITION QUERIES ("Nth word", "Nth letter", "kth character", "word #N of question X", "case scenario X qN mai N-th word"):
+    (a) Locate the exact target sentence/question from the context verbatim (e.g., Question 9 in Case Scenario IV).
+    (b) Tokenize by splitting on whitespace for words, and by character index for letters. Punctuation stays attached to the word it touches unless the user asks for "letter/character".
+    (c) Count strictly from 1 (1-based). Do NOT skip articles, numbers, or symbols.
+    (d) Reply in this exact format: 'The Nth word of <target> is "<word>". Full sentence: "<sentence>". Tokens: 1) <w1> 2) <w2> ...'  so the user can verify the count.
+    (e) If the target sentence isn't clearly present, say "The exact sentence for <target> is not in the retrieved context." — do NOT guess.
+12. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
