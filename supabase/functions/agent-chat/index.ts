@@ -252,7 +252,7 @@ function normalizeLoose(text: string): string {
   return String(text || "")
     .toLowerCase()
     .replace(/&/g, " and ")
-    .replace(/[^\p{L}\p{N}+\-\s]/gu, " ")
+    .replace(/[^\p{L}\p{N}+\s-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
