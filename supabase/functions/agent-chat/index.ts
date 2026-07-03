@@ -248,8 +248,131 @@ function fieldValue(context: string, label: string): string | null {
   return match?.[1]?.replace(/\s+/g, " ").trim() || null;
 }
 
+function normalizeLoose(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^\p{L}\p{N}+\-\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type PaperRow = {
+  raw: string;
+  subject: string;
+  examCode: string;
+  part: string;
+  group: string;
+  day: string;
+  date: string;
+  time: string;
+  remarks: string;
+};
+
+function extractPaperRows(context: string): PaperRow[] {
+  const paperMatch = context.match(/Paper\s+Details[\s\S]{0,5000}?(?=Instructions\s*\/|General Instructions|Principal|Controller of Examinations|$)/i);
+  const section = paperMatch?.[0] || context;
+  const lines = uniqueLines(section)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line && !/^Paper Details\b/i.test(line) && !/^ExamCode\b/i.test(line) && !/^Exam\s*Code\b/i.test(line));
+
+  const combinedRows: string[] = [];
+  let pendingSubject = "";
+  for (const line of lines) {
+    const hasCode = /\b\d{6,12}\b/.test(line);
+    if (!hasCode) {
+      if (/^(instructions|note|principal|controller)/i.test(line)) break;
+      if (/[A-Za-z]/.test(line)) pendingSubject = pendingSubject ? `${pendingSubject} ${line}` : line;
+      continue;
+    }
+    combinedRows.push(`${pendingSubject ? `${pendingSubject} ` : ""}${line}`.trim());
+    pendingSubject = "";
+  }
+
+  return combinedRows.map((raw) => {
+    const examCode = raw.match(/\b\d{6,12}\b/)?.[0] || "";
+    const beforeCode = examCode ? raw.slice(0, raw.indexOf(examCode)).trim() : raw;
+    const afterCode = examCode ? raw.slice(raw.indexOf(examCode) + examCode.length).trim() : "";
+    const day = afterCode.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i)?.[0] || "";
+    const date = afterCode.match(/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/)?.[0] || "";
+    const time = afterCode.match(/\b\d{1,2}:\d{2}\b/)?.[0] || "";
+    const pieces = afterCode.split(/\s+/).filter(Boolean);
+    const part = pieces.find((piece) => /^\d+$/.test(piece)) || "";
+    const group = pieces.find((piece) => piece === "-" || /^[A-Z]$/i.test(piece)) || "";
+    const remarks = afterCode.endsWith("-") ? "-" : "";
+    return { raw, subject: beforeCode, examCode, part, group, day, date, time, remarks };
+  }).filter((row) => row.examCode && row.subject);
+}
+
+function subjectTokensFromQuestion(question: string): string[] {
+  const filler = /\b(paper|subject|details?|detail|exam|code|kis|kiska|ka|ki|ke|kon|kaun|din|day|date|tarikh|time|timing|kab|hai|me|mein|mai|batao|bata|do|please|kya|which|what|when|is|the|of|in|for)\b/gi;
+  return normalizeLoose(question.replace(filler, " "))
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function scorePaperRow(questionTokens: string[], row: PaperRow): number {
+  const subject = normalizeLoose(row.subject);
+  if (!questionTokens.length) return 0;
+  let score = 0;
+  for (const token of questionTokens) {
+    if (subject.split(/\s+/).includes(token)) score += 3;
+    else if (subject.includes(token)) score += 2;
+    else if (normalizeLoose(row.raw).includes(token)) score += 1;
+  }
+  return score;
+}
+
+function paperDetailAnswer(question: string, chunks: RetrievedChunk[]): string | null {
+  const wantsPaper = /\b(subjects?|papers?|exam\s*code|examcode|paper\s*details|din|day|date|tarikh|time|timing|kab)\b/i.test(question);
+  if (!wantsPaper || !chunks.length) return null;
+
+  const ordered = [...chunks].sort((a, b) => {
+    if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+    return (b.hybridScore || b.similarity || 0) - (a.hybridScore || a.similarity || 0);
+  });
+  const context = ordered.map((c) => c.content).join("\n");
+  const rows = extractPaperRows(context);
+  if (!rows.length) return null;
+
+  const qTokens = subjectTokensFromQuestion(question);
+  const scored = rows
+    .map((row) => ({ row, score: scorePaperRow(qTokens, row) }))
+    .sort((a, b) => b.score - a.score);
+  const bestScore = scored[0]?.score || 0;
+  const asksAll = /\b(all|saare|sare|sab|list|full|complete|details?)\b/i.test(question) && bestScore === 0;
+  const matches = asksAll ? rows : scored.filter((item) => item.score === bestScore && item.score > 0).map((item) => item.row);
+  if (!matches.length) return null;
+
+  const wantsDay = /\b(din|day|kab|when)\b/i.test(question);
+  const wantsDate = /\b(date|tarikh)\b/i.test(question);
+  const wantsTime = /\b(time|timing|samay)\b/i.test(question);
+  const wantsCode = /\b(code|exam\s*code|examcode)\b/i.test(question);
+  const narrow = matches.length === 1 && (wantsDay || wantsDate || wantsTime || wantsCode);
+  const source = ordered.find((c) => matches.some((row) => c.content.includes(row.examCode) || c.content.includes(row.subject.split(/\s+/)[0]))) || ordered[0];
+
+  if (narrow) {
+    const r = matches[0];
+    const fields: string[] = [];
+    if (wantsDay) fields.push(`Day: **${r.day || "Not present"}**`);
+    if (wantsDate) fields.push(`Date: **${r.date || "Not present"}**`);
+    if (wantsTime) fields.push(`Time: **${r.time || "Not present"}**`);
+    if (wantsCode) fields.push(`Exam Code: **${r.examCode || "Not present"}**`);
+    return `**${r.subject}**\n\n${fields.join("\n")}\n\n| Subject/Paper | Exam Code | Part | Group | Day | Date | Time | Remarks |\n|---|---:|---:|---|---|---|---|---|\n| ${r.subject} | ${r.examCode} | ${r.part || "-"} | ${r.group || "-"} | ${r.day || "-"} | ${r.date || "-"} | ${r.time || "-"} | ${r.remarks || "-"} |\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+  }
+
+  const table = matches
+    .slice(0, 12)
+    .map((r) => `| ${r.subject} | ${r.examCode} | ${r.part || "-"} | ${r.group || "-"} | ${r.day || "-"} | ${r.date || "-"} | ${r.time || "-"} | ${r.remarks || "-"} |`)
+    .join("\n");
+  return `| Subject/Paper | Exam Code | Part | Group | Day | Date | Time | Remarks |\n|---|---:|---:|---|---|---|---|---|\n${table}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
 function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): string | null {
   if (!chunks.length) return null;
+  const paperAnswer = paperDetailAnswer(question, chunks);
+  if (paperAnswer) return paperAnswer;
+
   const q = question.toLowerCase();
   const ordered = [...chunks].sort((a, b) => {
     if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
@@ -290,7 +413,7 @@ function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): stri
   if (!fields.length && !paperLines.length) return null;
 
   const parts: string[] = [];
-  if (fields.length) parts.push(`Exact student/person details found:\n${fields.join("\n")}`);
+  if (fields.length && (wantsIdentity || !paperLines.length)) parts.push(`Exact student/person details found:\n${fields.join("\n")}`);
   if (paperLines.length) parts.push(`Exact paper/subject details found:\n${paperLines.map((line) => `- ${line}`).join("\n")}`);
   if (/\b(grades?|result|marks?)\b/i.test(q) && !/\b(grade|sgpa|cgpa|result|marks?)\b/i.test(paperLines.join(" "))) {
     parts.push("Grades/result status is not present in this document.");
