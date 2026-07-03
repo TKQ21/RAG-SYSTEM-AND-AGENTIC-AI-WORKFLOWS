@@ -441,13 +441,13 @@ function positionAnswer(
   const q = qOrig.toLowerCase();
   const cq = combined.toLowerCase();
 
-  // Detect position + unit. Support: "5 word", "8th word", "word 5", "5 letter", "5 shabd", "5 akshar".
+  // Detect position + unit. Support: "5 word", "8th word", "word 5", "5 letter/alphabet", "5 shabd", "5 akshar".
   let n = 0;
   let unit: "word" | "letter" = "word";
-  const m1 = q.match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*(word|shabd|letter|character|char|akshar)\b/);
-  const m2 = q.match(/\b(word|shabd|letter|character|char|akshar)\s*(?:#|number|no\.?)?\s*(\d+)\b/);
-  if (m1) { n = parseInt(m1[1], 10); unit = /letter|character|char|akshar/.test(m1[2]) ? "letter" : "word"; }
-  else if (m2) { n = parseInt(m2[2], 10); unit = /letter|character|char|akshar/.test(m2[1]) ? "letter" : "word"; }
+  const m1 = q.match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*(word|shabd|letter|alphabet|character|char|akshar)\b/);
+  const m2 = q.match(/\b(word|shabd|letter|alphabet|character|char|akshar)\s*(?:#|number|no\.?)?\s*(\d+)\b/);
+  if (m1) { n = parseInt(m1[1], 10); unit = /letter|alphabet|character|char|akshar/.test(m1[2]) ? "letter" : "word"; }
+  else if (m2) { n = parseInt(m2[2], 10); unit = /letter|alphabet|character|char|akshar/.test(m2[1]) ? "letter" : "word"; }
   else return null;
   if (!n || n < 1) return null;
 
