@@ -706,7 +706,7 @@ serve(async (req) => {
 
       // Wide-intent (about / biography / list-all) → much larger neighbor radius so full sections come through
       const ql = userQuery.toLowerCase();
-      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life)\b/i.test(ql);
+      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life|analysis|analyze|analyse|deep|detail)\b/i.test(ql);
       const radius = isWideIntent ? 6 : 1;
       const topN = isWideIntent ? 3 : 5;
       const top = chunks.slice(0, topN);
