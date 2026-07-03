@@ -181,27 +181,30 @@ function strictPrompt(): string {
 CRITICAL RULES:
 1. Answer ONLY from [Context]. Never use outside knowledge.
 2. Understand the user's semantic intent in English/Hindi/Hinglish, then map it to the relevant context chunks.
-3. If relevant context chunks are provided, DO NOT reject the question just because the user's wording is imperfect. Answer with the closest exact fields/lines available in the context and clearly say which requested field is not present. Only say "I could not find a relevant answer in the provided documents." when the context has no related information at all.
-4. If multiple values exist, list ALL of them with exact labels.
-5. POWER BI / CHART TABLES: exported text from Power BI charts is UNRELIABLE for index alignment because bars are usually drawn sorted by VALUE DESCENDING while the legend keeps a different order. NEVER assume label[i] pairs with value[i]. Instead:
+3. Answer ONLY what the user asked. Do NOT dump student identity, all papers, summaries, or unrelated chunks unless the user asks for all/details/summary.
+4. If relevant context chunks are provided, DO NOT reject the question just because the user's wording is imperfect. Answer with the closest exact fields/lines available in the context and clearly say which requested field is not present. Only say "I could not find a relevant answer in the provided documents." when the context has no related information at all.
+5. Preserve exact spelling, numbers, symbols, casing, alphabet/letter, and word order from the source. Do not autocorrect OCR text unless asked.
+6. TABLES / PAPER DETAILS / MARKSHEETS: if the answer comes from a table, return a clean markdown table with only the relevant row(s) and columns. If the user asks about one paper/subject (e.g. "Hindi B paper kis din hai"), return ONLY that paper row and the exact requested field (day/date/time), not the whole admit card.
+7. If multiple values for the requested field exist, list ALL matching values with exact labels.
+8. POWER BI / CHART TABLES: exported text from Power BI charts is UNRELIABLE for index alignment because bars are usually drawn sorted by VALUE DESCENDING while the legend keeps a different order. NEVER assume label[i] pairs with value[i]. Instead:
    (a) Find the chart title (e.g. "Survival rate by Age Group").
    (b) Read both the category list and the numeric value list under that title.
    (c) Sort the values in DESCENDING order. The largest value belongs to the FIRST visible bar. The chart's category list is usually already in that descending order — pair them in the order they appear (label[0]↔valueDesc[0], label[1]↔valueDesc[1], ...).
    (d) Show the full mapping you derived ("Categories: [...]  Values (sorted desc): [...]") before stating the final answer for the requested category.
    Example: chart "Survival rate by Age Group" labels "61-70 40-50 51-60 BELOW 40 71+" with values "75.90% 40.38% 71.59% 74.32% 50.00%". After sorting values descending: 75.90, 74.32, 71.59, 50.00, 40.38 → 61-70=75.90%, 40-50=74.32%, 51-60=71.59%, BELOW 40=50.00%, 71+=40.38%.
-6. For "about / biography / introduction / overview / who is / kaun hai / bare mai / baare mai" questions, return EVERY biographical sentence in the context (birth, family, education, career, awards, philanthropy). Do NOT truncate, do NOT summarise — copy verbatim and stitch consecutive chunks. Aim for a complete multi-paragraph answer (200+ words) when the source has it.
-7. Keep answers concise (2-4 sentences) ONLY for narrow single-fact questions. For "about / list / all / full / summary / detail" questions give the complete answer.
-8. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found.
-9. If the user says "admit card", "hall ticket", "person", "candidate", "student", "naam/name", and the context has an admit card / hall ticket / marksheet / result / statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course / Exam Centre / Paper Details fields instead of rejecting it.
-10. If the user asks for subjects + grades but the context is an admit card/hall ticket with Paper Details and no grades, list the paper/subject details exactly and state: "Grades/result status is not present in this document."
-11. POSITION QUERIES ("Nth word", "Nth letter", "kth character", "word #N of question X", "case scenario X qN mai N-th word"):
+9. For "about / biography / introduction / overview / who is / kaun hai / bare mai / baare mai" questions, return EVERY biographical sentence in the context (birth, family, education, career, awards, philanthropy). Do NOT truncate, do NOT summarise — copy verbatim and stitch consecutive chunks. Aim for a complete multi-paragraph answer (200+ words) when the source has it.
+10. Keep answers concise (2-4 sentences) ONLY for narrow single-fact questions. For "about / list / all / full / summary / detail / deep analysis" questions give the complete answer, structured with headings and tables where useful.
+11. Match student NAME, Roll No, and Enrollment No interchangeably (e.g., "MOHD KAIF" and "25345201387" refer to the same student). Report all subjects, grades, SGPA, and result status found only when asked.
+12. If the user says "admit card", "hall ticket", "person", "candidate", "student", "naam/name", and the context has an admit card / hall ticket / marksheet / result / statement of marks, answer from the Name / Father's Name / Roll No / Enrollment / Course / Exam Centre / Paper Details fields instead of rejecting it.
+13. If the user asks for subjects + grades but the context is an admit card/hall ticket with Paper Details and no grades, list the paper/subject details exactly and state: "Grades/result status is not present in this document."
+14. POSITION QUERIES ("Nth word", "Nth letter", "Nth alphabet", "kth character", "word #N of question X", "case scenario X qN mai N-th word"):
     (a) Locate the exact target sentence/question from the context verbatim (e.g., Question 9 in Case Scenario IV).
     (b) Tokenize by splitting ONLY on whitespace. Compound tokens joined by "/" or "-" (e.g. "his/her", "40-50", "father-in-law") count as ONE word. Punctuation stays attached to the word it touches unless the user asks for "letter/character".
     (c) When the target is "Q.N / Question N / point N / instruction N / step N", DROP the leading label token (Q.4, 4., (4), Question 4) before counting — the user's Nth word is the Nth word of the actual sentence, not of the label.
     (d) Count strictly from 1 (1-based). Do NOT skip articles, numbers, or symbols inside the sentence.
     (e) Reply in this exact format: 'The Nth word of <target> is "<word>". Full sentence: "<sentence>". Tokens: 1) <w1> 2) <w2> ...'  so the user can verify the count.
     (f) If the target sentence isn't clearly present, say "The exact sentence for <target> is not in the retrieved context." — do NOT guess.
-12. End every answer with citations, max 3, one per line:
+15. End every answer with citations, max 3, one per line:
 📌 Source: [filename] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
@@ -245,8 +248,131 @@ function fieldValue(context: string, label: string): string | null {
   return match?.[1]?.replace(/\s+/g, " ").trim() || null;
 }
 
+function normalizeLoose(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^\p{L}\p{N}+\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type PaperRow = {
+  raw: string;
+  subject: string;
+  examCode: string;
+  part: string;
+  group: string;
+  day: string;
+  date: string;
+  time: string;
+  remarks: string;
+};
+
+function extractPaperRows(context: string): PaperRow[] {
+  const paperMatch = context.match(/Paper\s+Details[\s\S]{0,5000}?(?=Instructions\s*\/|General Instructions|Principal|Controller of Examinations|$)/i);
+  const section = paperMatch?.[0] || context;
+  const lines = uniqueLines(section)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line && !/^Paper Details\b/i.test(line) && !/^ExamCode\b/i.test(line) && !/^Exam\s*Code\b/i.test(line));
+
+  const combinedRows: string[] = [];
+  let pendingSubject = "";
+  for (const line of lines) {
+    const hasCode = /\b\d{6,12}\b/.test(line);
+    if (!hasCode) {
+      if (/^(instructions|note|principal|controller)/i.test(line)) break;
+      if (/[A-Za-z]/.test(line)) pendingSubject = pendingSubject ? `${pendingSubject} ${line}` : line;
+      continue;
+    }
+    combinedRows.push(`${pendingSubject ? `${pendingSubject} ` : ""}${line}`.trim());
+    pendingSubject = "";
+  }
+
+  return combinedRows.map((raw) => {
+    const examCode = raw.match(/\b\d{6,12}\b/)?.[0] || "";
+    const beforeCode = examCode ? raw.slice(0, raw.indexOf(examCode)).trim() : raw;
+    const afterCode = examCode ? raw.slice(raw.indexOf(examCode) + examCode.length).trim() : "";
+    const day = afterCode.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i)?.[0] || "";
+    const date = afterCode.match(/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/)?.[0] || "";
+    const time = afterCode.match(/\b\d{1,2}:\d{2}\b/)?.[0] || "";
+    const pieces = afterCode.split(/\s+/).filter(Boolean);
+    const part = pieces.find((piece) => /^\d+$/.test(piece)) || "";
+    const group = pieces.find((piece) => piece === "-" || /^[A-Z]$/i.test(piece)) || "";
+    const remarks = afterCode.endsWith("-") ? "-" : "";
+    return { raw, subject: beforeCode, examCode, part, group, day, date, time, remarks };
+  }).filter((row) => row.examCode && row.subject);
+}
+
+function subjectTokensFromQuestion(question: string): string[] {
+  const filler = /\b(paper|subject|details?|detail|exam|code|kis|kiska|ka|ki|ke|kon|kaun|din|day|date|tarikh|time|timing|kab|hai|me|mein|mai|batao|bata|do|please|kya|which|what|when|is|the|of|in|for)\b/gi;
+  return normalizeLoose(question.replace(filler, " "))
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function scorePaperRow(questionTokens: string[], row: PaperRow): number {
+  const subject = normalizeLoose(row.subject);
+  if (!questionTokens.length) return 0;
+  let score = 0;
+  for (const token of questionTokens) {
+    if (subject.split(/\s+/).includes(token)) score += 3;
+    else if (subject.includes(token)) score += 2;
+    else if (normalizeLoose(row.raw).includes(token)) score += 1;
+  }
+  return score;
+}
+
+function paperDetailAnswer(question: string, chunks: RetrievedChunk[]): string | null {
+  const wantsPaper = /\b(subjects?|papers?|exam\s*code|examcode|paper\s*details|din|day|date|tarikh|time|timing|kab)\b/i.test(question);
+  if (!wantsPaper || !chunks.length) return null;
+
+  const ordered = [...chunks].sort((a, b) => {
+    if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+    return (b.hybridScore || b.similarity || 0) - (a.hybridScore || a.similarity || 0);
+  });
+  const context = ordered.map((c) => c.content).join("\n");
+  const rows = extractPaperRows(context);
+  if (!rows.length) return null;
+
+  const qTokens = subjectTokensFromQuestion(question);
+  const scored = rows
+    .map((row) => ({ row, score: scorePaperRow(qTokens, row) }))
+    .sort((a, b) => b.score - a.score);
+  const bestScore = scored[0]?.score || 0;
+  const asksAll = /\b(all|saare|sare|sab|list|full|complete|details?)\b/i.test(question) && bestScore === 0;
+  const matches = asksAll ? rows : scored.filter((item) => item.score === bestScore && item.score > 0).map((item) => item.row);
+  if (!matches.length) return null;
+
+  const wantsDay = /\b(din|day|kab|when)\b/i.test(question);
+  const wantsDate = /\b(date|tarikh)\b/i.test(question);
+  const wantsTime = /\b(time|timing|samay)\b/i.test(question);
+  const wantsCode = /\b(code|exam\s*code|examcode)\b/i.test(question);
+  const narrow = matches.length === 1 && (wantsDay || wantsDate || wantsTime || wantsCode);
+  const source = ordered.find((c) => matches.some((row) => c.content.includes(row.examCode) || c.content.includes(row.subject.split(/\s+/)[0]))) || ordered[0];
+
+  if (narrow) {
+    const r = matches[0];
+    const fields: string[] = [];
+    if (wantsDay) fields.push(`Day: **${r.day || "Not present"}**`);
+    if (wantsDate) fields.push(`Date: **${r.date || "Not present"}**`);
+    if (wantsTime) fields.push(`Time: **${r.time || "Not present"}**`);
+    if (wantsCode) fields.push(`Exam Code: **${r.examCode || "Not present"}**`);
+    return `**${r.subject}**\n\n${fields.join("\n")}\n\n| Subject/Paper | Exam Code | Part | Group | Day | Date | Time | Remarks |\n|---|---:|---:|---|---|---|---|---|\n| ${r.subject} | ${r.examCode} | ${r.part || "-"} | ${r.group || "-"} | ${r.day || "-"} | ${r.date || "-"} | ${r.time || "-"} | ${r.remarks || "-"} |\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+  }
+
+  const table = matches
+    .slice(0, 12)
+    .map((r) => `| ${r.subject} | ${r.examCode} | ${r.part || "-"} | ${r.group || "-"} | ${r.day || "-"} | ${r.date || "-"} | ${r.time || "-"} | ${r.remarks || "-"} |`)
+    .join("\n");
+  return `| Subject/Paper | Exam Code | Part | Group | Day | Date | Time | Remarks |\n|---|---:|---:|---|---|---|---|---|\n${table}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
 function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): string | null {
   if (!chunks.length) return null;
+  const paperAnswer = paperDetailAnswer(question, chunks);
+  if (paperAnswer) return paperAnswer;
+
   const q = question.toLowerCase();
   const ordered = [...chunks].sort((a, b) => {
     if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
@@ -287,7 +413,7 @@ function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): stri
   if (!fields.length && !paperLines.length) return null;
 
   const parts: string[] = [];
-  if (fields.length) parts.push(`Exact student/person details found:\n${fields.join("\n")}`);
+  if (fields.length && (wantsIdentity || !paperLines.length)) parts.push(`Exact student/person details found:\n${fields.join("\n")}`);
   if (paperLines.length) parts.push(`Exact paper/subject details found:\n${paperLines.map((line) => `- ${line}`).join("\n")}`);
   if (/\b(grades?|result|marks?)\b/i.test(q) && !/\b(grade|sgpa|cgpa|result|marks?)\b/i.test(paperLines.join(" "))) {
     parts.push("Grades/result status is not present in this document.");
@@ -315,13 +441,13 @@ function positionAnswer(
   const q = qOrig.toLowerCase();
   const cq = combined.toLowerCase();
 
-  // Detect position + unit. Support: "5 word", "8th word", "word 5", "5 letter", "5 shabd", "5 akshar".
+  // Detect position + unit. Support: "5 word", "8th word", "word 5", "5 letter/alphabet", "5 shabd", "5 akshar".
   let n = 0;
   let unit: "word" | "letter" = "word";
-  const m1 = q.match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*(word|shabd|letter|character|char|akshar)\b/);
-  const m2 = q.match(/\b(word|shabd|letter|character|char|akshar)\s*(?:#|number|no\.?)?\s*(\d+)\b/);
-  if (m1) { n = parseInt(m1[1], 10); unit = /letter|character|char|akshar/.test(m1[2]) ? "letter" : "word"; }
-  else if (m2) { n = parseInt(m2[2], 10); unit = /letter|character|char|akshar/.test(m2[1]) ? "letter" : "word"; }
+  const m1 = q.match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*(word|shabd|letter|alphabet|character|char|akshar)\b/);
+  const m2 = q.match(/\b(word|shabd|letter|alphabet|character|char|akshar)\s*(?:#|number|no\.?)?\s*(\d+)\b/);
+  if (m1) { n = parseInt(m1[1], 10); unit = /letter|alphabet|character|char|akshar/.test(m1[2]) ? "letter" : "word"; }
+  else if (m2) { n = parseInt(m2[2], 10); unit = /letter|alphabet|character|char|akshar/.test(m2[1]) ? "letter" : "word"; }
   else return null;
   if (!n || n < 1) return null;
 
@@ -580,7 +706,7 @@ serve(async (req) => {
 
       // Wide-intent (about / biography / list-all) → much larger neighbor radius so full sections come through
       const ql = userQuery.toLowerCase();
-      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life)\b/i.test(ql);
+      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life|analysis|analyze|analyse|deep|detail)\b/i.test(ql);
       const radius = isWideIntent ? 6 : 1;
       const topN = isWideIntent ? 3 : 5;
       const top = chunks.slice(0, topN);
