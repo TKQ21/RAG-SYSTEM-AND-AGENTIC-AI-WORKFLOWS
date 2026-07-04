@@ -196,6 +196,8 @@ export async function extractDocumentText(file: File): Promise<string> {
   } else if (extension === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
     extractedText = normalizeExtractedText(result.value || "");
+  } else if (isSpreadsheet(file)) {
+    extractedText = await extractSpreadsheet(file);
   } else {
     extractedText = normalizeExtractedText(await file.text());
   }
@@ -227,6 +229,11 @@ export async function extractDocumentWithImages(file: File): Promise<{
       pageImages: result.pageImages,
       isImageHeavy,
     };
+  }
+
+  if (isSpreadsheet(file)) {
+    const text = await extractSpreadsheet(file);
+    return { text, pageImages: [], isImageHeavy: false };
   }
 
   // Non-PDF files
