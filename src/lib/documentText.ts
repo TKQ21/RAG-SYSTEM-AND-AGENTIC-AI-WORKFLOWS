@@ -122,6 +122,54 @@ function getFileExtension(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
 }
 
+function cellToText(cell: unknown): string {
+  if (cell === null || cell === undefined) return "";
+  if (typeof cell === "object" && cell && "v" in cell) {
+    try {
+      return XLSX.utils.format_cell(cell as XLSX.CellObject).replace(/\s+/g, " ").trim();
+    } catch {
+      return String((cell as { v?: unknown }).v ?? "").replace(/\s+/g, " ").trim();
+    }
+  }
+  return String(cell).replace(/\s+/g, " ").trim();
+}
+
+function worksheetToRows(ws: XLSX.WorkSheet): unknown[][] {
+  const sheet = ws as unknown as Record<string, unknown> & unknown[][];
+  const rowsByIndex = new Map<number, string[]>();
+
+  if (Array.isArray(sheet)) {
+    for (let r = 0; r < sheet.length; r += 1) {
+      const srcRow = sheet[r];
+      if (!Array.isArray(srcRow)) continue;
+      const row: string[] = [];
+      for (let c = 0; c < srcRow.length; c += 1) {
+        const value = cellToText(srcRow[c]);
+        if (value) row[c] = value;
+      }
+      while (row.length && !row[row.length - 1]) row.pop();
+      if (row.some(Boolean)) rowsByIndex.set(r, row);
+    }
+  } else {
+    for (const address of Object.keys(sheet)) {
+      if (address[0] === "!") continue;
+      const decoded = XLSX.utils.decode_cell(address);
+      const value = cellToText(sheet[address]);
+      if (!value) continue;
+      const row = rowsByIndex.get(decoded.r) || [];
+      row[decoded.c] = value;
+      rowsByIndex.set(decoded.r, row);
+    }
+  }
+
+  return Array.from(rowsByIndex.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, row]) => {
+      while (row.length && !row[row.length - 1]) row.pop();
+      return row;
+    });
+}
+
 function sheetRowsToText(rows: unknown[][], sheetName: string): string {
   if (!rows || rows.length === 0) return "";
   // Normalize each cell to string
@@ -144,20 +192,26 @@ function sheetRowsToText(rows: unknown[][], sheetName: string): string {
   lines.push(`Total rows: ${body.length} | Total columns: ${maxCols}`);
   lines.push("");
 
-  // Markdown table
+  // Markdown table for smaller sheets. Large sheets stay row-structured so uploads do not crash or truncate.
   const headerRow = hasHeader ? header : header.map((_, i) => `Column ${i + 1}`);
-  lines.push(`| ${headerRow.map((c) => c || " ").join(" | ")} |`);
-  lines.push(`| ${headerRow.map(() => "---").join(" | ")} |`);
   const dataRows = hasHeader ? body : norm;
-  for (const r of dataRows) {
-    lines.push(`| ${r.map((c) => (c || " ").replace(/\|/g, "\\|")).join(" | ")} |`);
+  if (dataRows.length <= 200) {
+    lines.push(`| ${headerRow.map((c) => c || " ").join(" | ")} |`);
+    lines.push(`| ${headerRow.map(() => "---").join(" | ")} |`);
+    for (const r of dataRows) {
+      lines.push(`| ${r.map((c) => (c || " ").replace(/\|/g, "\\|")).join(" | ")} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push(`Columns: ${headerRow.map((c, i) => c || `Column ${i + 1}`).join(" | ")}`);
+    lines.push("Large sheet: rows are stored below in structured format for exact counting/filtering.");
+    lines.push("");
   }
 
   // Also add plain row-by-row block so chunker can index per row
-  lines.push("");
   lines.push("## Rows (structured)");
   dataRows.forEach((r, idx) => {
-    const parts = r.map((c, i) => `${headerRow[i] || `Col${i + 1}`}: ${c}`);
+    const parts = r.map((c, i) => `${headerRow[i] || `Column ${i + 1}`}: ${c}`);
     lines.push(`Row ${idx + 1}: ${parts.join(" | ")}`);
   });
 
@@ -166,11 +220,11 @@ function sheetRowsToText(rows: unknown[][], sheetName: string): string {
 
 async function extractSpreadsheet(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array" });
+  const wb = XLSX.read(buf, { type: "array", dense: true, cellDates: true, raw: false });
   const parts: string[] = [];
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: "" });
+    const rows = worksheetToRows(ws);
     const text = sheetRowsToText(rows as unknown[][], name);
     if (text) parts.push(text);
   }
