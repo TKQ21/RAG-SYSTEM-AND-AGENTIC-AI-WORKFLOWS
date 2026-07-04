@@ -200,12 +200,11 @@ export function useAgentChat(userId: string | null) {
 
     try {
       const { text, pageImages, isImageHeavy } = await extractDocumentWithImages(file);
-      const truncated = text.slice(0, 100000);
       toast.info(`Processing "${file.name}"${isImageHeavy ? " with AI Vision..." : "..."}`);
 
       const body: any = {
         documentName: file.name,
-        documentText: truncated,
+        documentText: text,
         mimeType: file.type,
         fileSize: file.size,
       };

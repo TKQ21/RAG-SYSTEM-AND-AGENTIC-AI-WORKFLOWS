@@ -127,6 +127,8 @@ async function embed(text: string, _taskType = "RETRIEVAL_DOCUMENT"): Promise<nu
 
 function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
   const clean = sanitizeText(text);
+  const spreadsheetChunks = chunkSpreadsheetRows(clean);
+  if (spreadsheetChunks.length) return spreadsheetChunks;
   if (clean.length <= chunkSize) return [clean];
   const chunks: string[] = [];
   let i = 0;
@@ -146,6 +148,51 @@ function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
     if (end >= clean.length) break;
     i = end - overlap;
   }
+  return chunks;
+}
+
+function chunkSpreadsheetRows(clean: string): string[] {
+  if (!/(^|\n)## Rows \(structured\)(\n|$)/i.test(clean) || !/(^|\n)Row\s+\d+\s*:/i.test(clean)) return [];
+
+  const chunks: string[] = [];
+  let meta: string[] = [];
+  let rows: string[] = [];
+  let rowChars = 0;
+
+  const flush = () => {
+    if (!rows.length) return;
+    const piece = [...meta.slice(-6), ...rows].join("\n").trim();
+    if (piece.length > 10) chunks.push(piece);
+    rows = [];
+    rowChars = 0;
+  };
+
+  for (const rawLine of clean.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (/^# Sheet:/i.test(line)) {
+      flush();
+      meta = [line];
+      continue;
+    }
+
+    if (/^(Total rows:|Total columns:|Columns:|Large sheet:|## Rows \(structured\))/i.test(line)) {
+      meta.push(line);
+      continue;
+    }
+
+    if (/^Row\s+\d+\s*:/i.test(line)) {
+      if (rows.length > 0 && rowChars + line.length > 1400) flush();
+      rows.push(line);
+      rowChars += line.length + 1;
+      continue;
+    }
+
+    if (!line.startsWith("|") && meta.length < 6) meta.push(line);
+  }
+  flush();
+
   return chunks;
 }
 

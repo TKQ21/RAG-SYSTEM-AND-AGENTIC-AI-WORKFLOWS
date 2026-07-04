@@ -97,7 +97,7 @@ function keywords(text: string): string[] {
     .replace(/[^\p{L}\p{N}\-+\s]/gu, " ")
     .split(/\s+/)
     .map((w) => w.replace(/^[-+]+|[-+]+$/g, (m) => (/\d/.test(w) ? m : "")))
-    .filter((w) => w.length >= 2 && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
+    .filter((w) => (/\d/.test(w) || w.length >= 2) && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
 }
 
 function expandedKeywords(question: string): string[] {
@@ -146,7 +146,7 @@ function buildVariants(question: string): string[] {
 
 async function keywordFallbackSearch(supabase: any, question: string, userId: string): Promise<RetrievedChunk[]> {
   const terms = expandedKeywords(question)
-    .filter((term) => term.length >= 3 && !/^(isme|kis|kya|hai)$/.test(term))
+    .filter((term) => (/\d/.test(term) || term.length >= 3) && !/^(isme|kis|kya|hai)$/.test(term))
     .slice(0, 14);
   if (!terms.length) return [];
 
@@ -420,6 +420,174 @@ function exactStructuredAnswer(question: string, chunks: RetrievedChunk[]): stri
   }
 
   return `${parts.join("\n\n")}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
+type SheetRow = {
+  document_id: string;
+  document_name: string;
+  chunk_index: number;
+  rowNumber: number;
+  raw: string;
+  fields: Record<string, string>;
+};
+
+function normalKey(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalValue(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[₹$,%]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sameCellValue(cell: string, expected: string): boolean {
+  const a = normalValue(cell);
+  const b = normalValue(expected);
+  if (!a || !b) return false;
+  const na = Number(a.replace(/,/g, ""));
+  const nb = Number(b.replace(/,/g, ""));
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na === nb;
+  return a === b || a.includes(b);
+}
+
+function parseSheetRows(chunks: RetrievedChunk[]): SheetRow[] {
+  const rows: SheetRow[] = [];
+  for (const chunk of chunks) {
+    for (const line of chunk.content.split(/\n+/)) {
+      const match = line.match(/^Row\s+(\d+)\s*:\s*(.+)$/i);
+      if (!match) continue;
+      const fields: Record<string, string> = {};
+      for (const part of match[2].split(/\s+\|\s+/)) {
+        const idx = part.indexOf(":");
+        if (idx <= 0) continue;
+        const key = part.slice(0, idx).replace(/\s+/g, " ").trim();
+        const value = part.slice(idx + 1).replace(/\s+/g, " ").trim();
+        if (key) fields[key] = value;
+      }
+      rows.push({
+        document_id: chunk.document_id,
+        document_name: chunk.document_name,
+        chunk_index: chunk.chunk_index,
+        rowNumber: Number(match[1]),
+        raw: line.trim(),
+        fields,
+      });
+    }
+  }
+  return rows;
+}
+
+function extractSheetMeta(chunks: RetrievedChunk[]): { rows?: number; cols?: number; columns?: string[] } {
+  const text = chunks.map((c) => c.content).join("\n");
+  const total = text.match(/Total rows:\s*(\d+)\s*\|\s*Total columns:\s*(\d+)/i);
+  const colsLine = text.match(/^Columns:\s*(.+)$/im);
+  return {
+    rows: total ? Number(total[1]) : undefined,
+    cols: total ? Number(total[2]) : undefined,
+    columns: colsLine ? colsLine[1].split(/\s+\|\s+/).map((c) => c.trim()).filter(Boolean) : undefined,
+  };
+}
+
+function pickSheetColumn(question: string, rows: SheetRow[], metaColumns: string[] = []): string | null {
+  const allColumns = Array.from(new Set([...metaColumns, ...rows.flatMap((r) => Object.keys(r.fields))].filter(Boolean)));
+  const q = normalKey(question);
+  const ranked = allColumns
+    .map((column) => ({ column, key: normalKey(column) }))
+    .filter((item) => item.key)
+    .sort((a, b) => b.key.length - a.key.length);
+  return ranked.find((item) => q.includes(item.key))?.column || null;
+}
+
+function valueAfterColumn(question: string, column: string): string | null {
+  const qTokens = normalKey(question).split(/\s+/).filter(Boolean);
+  const colTokens = normalKey(column).split(/\s+/).filter(Boolean);
+  const stop = new Set([
+    "ka", "ki", "ke", "hai", "hain", "me", "mein", "mai", "isme", "rows", "row", "kitni", "kitne", "kitna", "how", "many", "count", "total", "value", "equals", "equal", "is", "are", "of", "the", "bata", "batao", "do",
+  ]);
+  for (let i = 0; i <= qTokens.length - colTokens.length; i += 1) {
+    const hit = colTokens.every((token, j) => qTokens[i + j] === token);
+    if (!hit) continue;
+    for (let j = i + colTokens.length; j < qTokens.length; j += 1) {
+      const token = qTokens[j];
+      if (!token || stop.has(token)) continue;
+      return token;
+    }
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const token = qTokens[j];
+      if (!token || stop.has(token)) continue;
+      return token;
+    }
+  }
+  return null;
+}
+
+function markdownCell(text: string): string {
+  return String(text || "-").replace(/\|/g, "\\|");
+}
+
+function spreadsheetAnswerFromRows(question: string, chunks: RetrievedChunk[]): string | null {
+  const q = question.toLowerCase();
+  const asksSheet = /\b(rows?|columns?|cols?|kitni|kitne|count|total|how many|csv|excel|xlsx|xls|sheet)\b/i.test(q);
+  if (!asksSheet) return null;
+
+  const rows = parseSheetRows(chunks);
+  const meta = extractSheetMeta(chunks);
+  if (!rows.length && !meta.rows && !meta.cols) return null;
+  const source = chunks[0];
+
+  if (/\b(columns?|cols?)\b|columns?\s+hai|kitne\s+columns/i.test(q)) {
+    const columns = meta.columns || Array.from(new Set(rows.flatMap((r) => Object.keys(r.fields))));
+    return `Total columns: **${meta.cols || columns.length}**\n\n| # | Column |\n|---:|---|\n${columns.map((c, i) => `| ${i + 1} | ${markdownCell(c)} |`).join("\n")}\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+  }
+
+  const column = pickSheetColumn(question, rows, meta.columns);
+  if (!column) {
+    if (/\b(rows?|kitni|kitne|count|total|how many)\b/i.test(q)) {
+      return `Total rows: **${meta.rows || rows.length}**\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+    }
+    return null;
+  }
+
+  const expected = valueAfterColumn(question, column);
+  if (!expected) {
+    const nonEmpty = rows.filter((row) => String(row.fields[column] || "").trim()).length;
+    const unique = new Set(rows.map((row) => normalValue(row.fields[column] || "")).filter(Boolean));
+    return `Column **${column}** has **${nonEmpty}** non-empty rows and **${unique.size}** unique values.\n\n| Metric | Count |\n|---|---:|\n| Non-empty rows | ${nonEmpty} |\n| Unique values | ${unique.size} |\n\n📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+  }
+
+  const matches = rows.filter((row) => sameCellValue(row.fields[column] || "", expected));
+  const displayColumns = Array.from(new Set(["Row", column, ...Object.keys(matches[0]?.fields || {}).slice(0, 6)])).filter((c) => c !== "Row");
+  const sample = matches.slice(0, 20).map((row) => `| ${row.rowNumber} | ${displayColumns.map((c) => markdownCell(row.fields[c] || "")).join(" | ")} |`).join("\n");
+
+  return `Rows where **${column} = ${expected}**: **${matches.length}**\n\n| Row # | ${displayColumns.map(markdownCell).join(" | ")} |\n|---:|${displayColumns.map(() => "---").join("|")}|\n${sample || `| - | ${displayColumns.map(() => "-").join(" | ")} |`}\n\n${matches.length > 20 ? `_Showing first 20 matching rows._\n\n` : ""}📌 Source: ${source.document_name} | Chunk #${source.chunk_index}`;
+}
+
+async function spreadsheetAggregateAnswer(question: string, chunks: RetrievedChunk[], supabase: any, userId: string): Promise<string | null> {
+  const q = question.toLowerCase();
+  if (!/\b(rows?|columns?|cols?|kitni|kitne|count|total|how many|csv|excel|xlsx|xls|sheet)\b/i.test(q)) return null;
+  const candidateDocIds = Array.from(new Set(chunks.filter((c) => /(^|\n)(Row\s+\d+\s*:|## Rows \(structured\)|Total rows:)/i.test(c.content)).map((c) => c.document_id))).slice(0, 2);
+  if (!candidateDocIds.length) return spreadsheetAnswerFromRows(question, chunks);
+
+  const { data, error } = await supabase
+    .from("document_chunks")
+    .select("id,document_id,document_name,content,chunk_index,page_num")
+    .eq("user_id", userId)
+    .in("document_id", candidateDocIds)
+    .order("chunk_index", { ascending: true })
+    .limit(5000);
+  if (error) {
+    console.error("spreadsheet full-row fetch failed:", error.message);
+    return spreadsheetAnswerFromRows(question, chunks);
+  }
+  const allChunks = ((data || []) as any[]).map((row) => ({ ...row, similarity: 0, keywordScore: 0, hybridScore: 0 })) as RetrievedChunk[];
+  return spreadsheetAnswerFromRows(question, allChunks.length ? allChunks : chunks);
 }
 
 function ordSuffix(n: number): string {
@@ -746,6 +914,12 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const sheetAnswer = await spreadsheetAggregateAnswer(userQuery, chunks, supabase, userId);
+        if (sheetAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: sheetAnswer, user_id: userId });
+          return sseTextResponse(sheetAnswer);
+        }
+
         const posAnswer = positionAnswer(userQuery, chunks, previousUserTurns);
         if (posAnswer) {
           if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: posAnswer, user_id: userId });
