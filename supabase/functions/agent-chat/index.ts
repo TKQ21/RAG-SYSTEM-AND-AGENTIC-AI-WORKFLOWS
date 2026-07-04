@@ -97,7 +97,7 @@ function keywords(text: string): string[] {
     .replace(/[^\p{L}\p{N}\-+\s]/gu, " ")
     .split(/\s+/)
     .map((w) => w.replace(/^[-+]+|[-+]+$/g, (m) => (/\d/.test(w) ? m : "")))
-    .filter((w) => w.length >= 2 && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
+    .filter((w) => (/\d/.test(w) || w.length >= 2) && !/^(the|and|for|with|from|this|that|what|which|how|who|pdf|document|about)$/.test(w));
 }
 
 function expandedKeywords(question: string): string[] {
@@ -146,7 +146,7 @@ function buildVariants(question: string): string[] {
 
 async function keywordFallbackSearch(supabase: any, question: string, userId: string): Promise<RetrievedChunk[]> {
   const terms = expandedKeywords(question)
-    .filter((term) => term.length >= 3 && !/^(isme|kis|kya|hai)$/.test(term))
+    .filter((term) => (/\d/.test(term) || term.length >= 3) && !/^(isme|kis|kya|hai)$/.test(term))
     .slice(0, 14);
   if (!terms.length) return [];
 
@@ -914,6 +914,12 @@ serve(async (req) => {
       );
 
       if (chunks.length > 0) {
+        const sheetAnswer = await spreadsheetAggregateAnswer(userQuery, chunks, supabase, userId);
+        if (sheetAnswer) {
+          if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: sheetAnswer, user_id: userId });
+          return sseTextResponse(sheetAnswer);
+        }
+
         const posAnswer = positionAnswer(userQuery, chunks, previousUserTurns);
         if (posAnswer) {
           if (sessionId) await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: posAnswer, user_id: userId });
