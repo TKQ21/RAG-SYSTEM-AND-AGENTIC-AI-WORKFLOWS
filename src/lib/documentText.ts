@@ -1,6 +1,7 @@
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
+import * as XLSX from "xlsx";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
