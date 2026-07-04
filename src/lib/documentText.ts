@@ -1,6 +1,7 @@
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
+import * as XLSX from "xlsx";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -121,6 +122,69 @@ function getFileExtension(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
 }
 
+function sheetRowsToText(rows: unknown[][], sheetName: string): string {
+  if (!rows || rows.length === 0) return "";
+  // Normalize each cell to string
+  const norm = rows.map((r) =>
+    (r || []).map((c) => (c === null || c === undefined ? "" : String(c).replace(/\s+/g, " ").trim()))
+  );
+  // Trim trailing empty rows
+  while (norm.length && norm[norm.length - 1].every((c) => !c)) norm.pop();
+  if (!norm.length) return "";
+  const maxCols = Math.max(...norm.map((r) => r.length));
+  for (const r of norm) while (r.length < maxCols) r.push("");
+
+  const header = norm[0];
+  const body = norm.slice(1);
+  const hasHeader = header.some((c) => c && isNaN(Number(c)));
+
+  const lines: string[] = [];
+  lines.push(`# Sheet: ${sheetName}`);
+  lines.push(`Total rows: ${body.length} | Total columns: ${maxCols}`);
+  lines.push("");
+
+  // Markdown table
+  const headerRow = hasHeader ? header : header.map((_, i) => `Column ${i + 1}`);
+  lines.push(`| ${headerRow.map((c) => c || " ").join(" | ")} |`);
+  lines.push(`| ${headerRow.map(() => "---").join(" | ")} |`);
+  const dataRows = hasHeader ? body : norm;
+  for (const r of dataRows) {
+    lines.push(`| ${r.map((c) => (c || " ").replace(/\|/g, "\\|")).join(" | ")} |`);
+  }
+
+  // Also add plain row-by-row block so chunker can index per row
+  lines.push("");
+  lines.push("## Rows (structured)");
+  dataRows.forEach((r, idx) => {
+    const parts = r.map((c, i) => `${headerRow[i] || `Col${i + 1}`}: ${c}`);
+    lines.push(`Row ${idx + 1}: ${parts.join(" | ")}`);
+  });
+
+  return lines.join("\n");
+}
+
+async function extractSpreadsheet(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const parts: string[] = [];
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: "" });
+    const text = sheetRowsToText(rows as unknown[][], name);
+    if (text) parts.push(text);
+  }
+  return parts.join("\n\n");
+}
+
+function isSpreadsheet(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return (
+    ext === "xlsx" || ext === "xls" || ext === "csv" ||
+    file.type.includes("spreadsheet") || file.type === "text/csv" ||
+    file.type === "application/vnd.ms-excel"
+  );
+}
+
 export async function extractDocumentText(file: File): Promise<string> {
   const extension = getFileExtension(file.name);
 
@@ -132,6 +196,8 @@ export async function extractDocumentText(file: File): Promise<string> {
   } else if (extension === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
     extractedText = normalizeExtractedText(result.value || "");
+  } else if (isSpreadsheet(file)) {
+    extractedText = await extractSpreadsheet(file);
   } else {
     extractedText = normalizeExtractedText(await file.text());
   }
@@ -163,6 +229,11 @@ export async function extractDocumentWithImages(file: File): Promise<{
       pageImages: result.pageImages,
       isImageHeavy,
     };
+  }
+
+  if (isSpreadsheet(file)) {
+    const text = await extractSpreadsheet(file);
+    return { text, pageImages: [], isImageHeavy: false };
   }
 
   // Non-PDF files
