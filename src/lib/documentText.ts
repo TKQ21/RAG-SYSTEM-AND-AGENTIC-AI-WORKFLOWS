@@ -131,7 +131,8 @@ function sheetRowsToText(rows: unknown[][], sheetName: string): string {
   // Trim trailing empty rows
   while (norm.length && norm[norm.length - 1].every((c) => !c)) norm.pop();
   if (!norm.length) return "";
-  const maxCols = Math.max(...norm.map((r) => r.length));
+  let maxCols = 0;
+  for (const r of norm) if (r.length > maxCols) maxCols = r.length;
   for (const r of norm) while (r.length < maxCols) r.push("");
 
   const header = norm[0];
