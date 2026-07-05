@@ -29,7 +29,7 @@ async function gatewayFetch(path: string, body: unknown, attempts = 3): Promise<
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const res = await fetch(`${GATEWAY}${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+      headers: { "Lovable-API-Key": LOVABLE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     if (res.ok || ![429, 500, 502, 503, 504].includes(res.status)) return res;
@@ -37,6 +37,40 @@ async function gatewayFetch(path: string, body: unknown, attempts = 3): Promise<
     await wait(900 * (attempt + 1));
   }
   return last!;
+}
+
+async function ocrPdfWithVision(pdfBase64: string, documentName: string, mimeType = "application/pdf"): Promise<string> {
+  if (!pdfBase64) return "";
+  const res = await gatewayFetch("/chat/completions", {
+    model: "google/gemini-2.5-flash",
+    temperature: 0,
+    max_tokens: 12000,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "OCR this full PDF. Extract ALL readable text exactly as it appears from every page. Preserve page order, question numbers, tables, rows, columns, names, roll numbers, dates, marks, options, and symbols. Prefix each page as [Page N]. Return only raw extracted text; no summary and no commentary.",
+          },
+          {
+            type: "file",
+            file: {
+              filename: documentName || "document.pdf",
+              file_data: `data:${mimeType || "application/pdf"};base64,${pdfBase64}`,
+            },
+          },
+        ],
+      },
+    ],
+  });
+  if (!res.ok) {
+    console.error("pdf vision ocr failed", res.status, (await res.text()).slice(0, 300));
+    return "";
+  }
+  const json = await res.json();
+  return String(json.choices?.[0]?.message?.content || "").trim();
 }
 
 async function ocrPageImagesTogether(images: string[]): Promise<string> {
@@ -120,12 +154,7 @@ async function ocrPagesInParallel(images: string[], concurrency = 3): Promise<st
   return out.filter(Boolean).join("\n\n");
 }
 
-async function embed(text: string, _taskType = "RETRIEVAL_DOCUMENT"): Promise<number[]> {
-  const [vector] = await embedBatch([text]);
-  return vector;
-}
-
-function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
+function chunkText(text: string, chunkSize = 950, overlap = 180): string[] {
   const clean = sanitizeText(text);
   const spreadsheetChunks = chunkSpreadsheetRows(clean);
   if (spreadsheetChunks.length) return spreadsheetChunks;
@@ -217,7 +246,7 @@ serve(async (req) => {
     }
     const userId = userData.user.id;
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { documentName, documentText, mimeType, fileSize, pageImages } = await req.json();
+    const { documentName, documentText, mimeType, fileSize, pageImages, pdfBase64, pageCount } = await req.json();
 
     if (!documentName || typeof documentName !== "string") {
       return new Response(JSON.stringify({ error: "documentName required" }), {
@@ -228,17 +257,25 @@ serve(async (req) => {
 
     let fullText = sanitizeText(documentText || "");
     const images: string[] = Array.isArray(pageImages) ? pageImages : [];
+    const rawPdf = typeof pdfBase64 === "string" ? pdfBase64 : "";
 
     // Decide if we need OCR: scanned/visual PDFs need Vision, while text PDFs can use native text.
     const letterCount = (fullText.match(/[A-Za-z\u00C0-\u024F]/g) || []).length;
-    const avgPerPage = images.length > 0 ? fullText.length / images.length : fullText.length;
-    const needsOcr = images.length > 0 && (fullText.length < 500 || letterCount < 100 || avgPerPage < 100);
+    const pageTotal = Number(pageCount) > 0 ? Number(pageCount) : Math.max(images.length, 1);
+    const avgPerPage = fullText.length / pageTotal;
+    const needsOcr = (rawPdf || images.length > 0) && (fullText.length < 500 || letterCount < 100 || avgPerPage < 120);
 
     if (needsOcr) {
-      console.log(`OCR fallback: native text ${fullText.length} chars across ${images.length} pages — running Gemini Vision`);
-      const ocrText = await ocrPagesInParallel(images, 2);
+      console.log(`OCR fallback: native text ${fullText.length} chars across ${pageTotal} pages — running Gemini Vision`);
+      const ocrText = rawPdf
+        ? await ocrPdfWithVision(rawPdf, documentName, mimeType || "application/pdf")
+        : await ocrPagesInParallel(images, 2);
       if (ocrText.length > fullText.length) {
         fullText = sanitizeText(ocrText);
+      }
+      if (fullText.length < 20 && images.length > 0) {
+        const imageOcrText = await ocrPagesInParallel(images, 2);
+        if (imageOcrText.length > fullText.length) fullText = sanitizeText(imageOcrText);
       }
     }
 
@@ -268,8 +305,8 @@ serve(async (req) => {
     console.log(`"${documentName}": ${chunks.length} chunks`);
 
     // Batch embeddings into one gateway request per group to avoid rate limits and scale to large documents.
-    const EMBED_BATCH = 32;
-    const BATCH_INSERT = 50;
+    const EMBED_BATCH = 64;
+    const BATCH_INSERT = 100;
     let stored = 0;
     let cursor = 0;
     const positions = chunks.map((content) => {
