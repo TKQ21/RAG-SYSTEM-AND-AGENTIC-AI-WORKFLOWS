@@ -32,7 +32,7 @@ async function gatewayFetch(path: string, body: unknown, attempts = 2): Promise<
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const res = await fetch(`${GATEWAY}${path}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_KEY}`, "Content-Type": "application/json" },
+      headers: { "Lovable-API-Key": LOVABLE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     if (res.ok || ![429, 500, 502, 503, 504].includes(res.status)) return res;
@@ -216,7 +216,78 @@ function buildContext(chunks: RetrievedChunk[]): string {
         `[Chunk #${c.chunk_index} | File: ${c.document_name} | Sim: ${Math.round((c.similarity || 0) * 100)}% | KW: ${Math.round((c.keywordScore || 0) * 100)}%]\n${c.content}`,
     )
     .join("\n\n---\n\n")
-    .slice(0, 32000);
+    .slice(0, 70000);
+}
+
+function isDeepIntent(question: string): boolean {
+  return /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life|analysis|analyze|analyse|deep|detail|details|explain|summary|summarise|long|poora|pura|saara|sara|sab)\b/i.test(question);
+}
+
+async function expandDocumentContext(
+  supabase: any,
+  userId: string,
+  chunks: RetrievedChunk[],
+  question: string,
+): Promise<RetrievedChunk[]> {
+  if (!chunks.length) return chunks;
+  const wide = isDeepIntent(question);
+  const radius = wide ? 10 : 2;
+  const topN = wide ? 4 : 6;
+  const seen = new Map<string, RetrievedChunk>();
+  chunks.forEach((c) => seen.set(c.id, c));
+
+  if (wide) {
+    const docIds = Array.from(new Set(chunks.slice(0, 6).map((c) => c.document_id))).slice(0, 2);
+    const { data, error } = await supabase
+      .from("document_chunks")
+      .select("id,document_id,document_name,content,chunk_index,page_num")
+      .eq("user_id", userId)
+      .in("document_id", docIds)
+      .order("chunk_index", { ascending: true })
+      .limit(350);
+    if (!error) {
+      for (const row of (data || []) as any[]) {
+        if (!seen.has(row.id)) seen.set(row.id, { ...row, similarity: 0, keywordScore: 0, hybridScore: 0 });
+      }
+    } else {
+      console.error("wide context fetch failed:", error.message);
+    }
+  } else {
+    const neighborKeys = new Set<string>();
+    for (const c of chunks.slice(0, topN)) {
+      for (let off = -radius; off <= radius; off++) {
+        if (off === 0) continue;
+        neighborKeys.add(`${c.document_id}:${c.chunk_index + off}`);
+      }
+    }
+    const haveKeys = new Set(chunks.map((c) => `${c.document_id}:${c.chunk_index}`));
+    const missing = Array.from(neighborKeys).filter((k) => !haveKeys.has(k));
+    if (missing.length > 0) {
+      const orFilter = missing
+        .map((k) => {
+          const [doc, idx] = k.split(":");
+          return `and(document_id.eq.${doc},chunk_index.eq.${idx})`;
+        })
+        .join(",");
+      const { data, error } = await supabase
+        .from("document_chunks")
+        .select("id,document_id,document_name,content,chunk_index,page_num")
+        .eq("user_id", userId)
+        .or(orFilter);
+      if (!error) {
+        for (const n of (data || []) as any[]) {
+          if (!seen.has(n.id)) seen.set(n.id, { ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
+        }
+      } else {
+        console.error("neighbor fetch failed:", error.message);
+      }
+    }
+  }
+
+  return Array.from(seen.values()).sort((a, b) => {
+    if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
+    return (b.hybridScore || b.similarity || 0) - (a.hybridScore || a.similarity || 0);
+  });
 }
 
 function escapeSse(text: string): Uint8Array {
@@ -868,46 +939,11 @@ serve(async (req) => {
       for (const c of seen.values()) {
         c.hybridScore = (c.similarity || 0) * semanticWeight + (c.keywordScore || 0) * keywordWeight;
       }
-      const chunks = Array.from(seen.values())
+      let chunks = Array.from(seen.values())
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
-        .slice(0, 25);
+        .slice(0, 45);
 
-      // Wide-intent (about / biography / list-all) → much larger neighbor radius so full sections come through
-      const ql = userQuery.toLowerCase();
-      const isWideIntent = /\b(about|biography|biograph|overview|introduction|intro|who is|kaun|bare|baare|complete|full|all|list|history|career|life|analysis|analyze|analyse|deep|detail)\b/i.test(ql);
-      const radius = isWideIntent ? 6 : 1;
-      const topN = isWideIntent ? 3 : 5;
-      const top = chunks.slice(0, topN);
-      const neighborKeys = new Set<string>();
-      for (const c of top) {
-        for (let off = -radius; off <= radius; off++) {
-          if (off === 0) continue;
-          neighborKeys.add(`${c.document_id}:${c.chunk_index + off}`);
-        }
-      }
-      const haveKeys = new Set(chunks.map((c) => `${c.document_id}:${c.chunk_index}`));
-      const missing = Array.from(neighborKeys).filter((k) => !haveKeys.has(k));
-      if (missing.length > 0) {
-        const orFilter = missing
-          .map((k) => {
-            const [doc, idx] = k.split(":");
-            return `and(document_id.eq.${doc},chunk_index.eq.${idx})`;
-          })
-          .join(",");
-        const { data: neigh } = await supabase
-          .from("document_chunks")
-          .select("id,document_id,document_name,content,chunk_index,page_num")
-          .eq("user_id", userId)
-          .or(orFilter);
-        for (const n of (neigh || []) as any[]) {
-          chunks.push({ ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
-        }
-        // Re-sort: keep top-scored first, then neighbors interleaved by chunk_index per doc
-        chunks.sort((a, b) => {
-          if (a.document_id === b.document_id) return a.chunk_index - b.chunk_index;
-          return (b.hybridScore || 0) - (a.hybridScore || 0);
-        });
-      }
+      chunks = await expandDocumentContext(supabase, userId, chunks, userQuery);
 
       console.log(
         JSON.stringify({ event: "retrieval", query: userQuery, retrievalQuery, variants, chunks: chunks.length }),
@@ -953,7 +989,7 @@ serve(async (req) => {
       messages: aiMessages,
       stream: true,
       temperature: 0,
-      max_tokens: 4096,
+      max_tokens: 8192,
     });
 
     if (!response.ok) {

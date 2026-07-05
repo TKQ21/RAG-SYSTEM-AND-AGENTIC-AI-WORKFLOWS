@@ -199,7 +199,7 @@ export function useAgentChat(userId: string | null) {
     setDocuments((prev) => [...prev, doc]);
 
     try {
-      const { text, pageImages, isImageHeavy } = await extractDocumentWithImages(file);
+      const { text, pageImages, isImageHeavy, pdfBase64, pageCount } = await extractDocumentWithImages(file);
       toast.info(`Processing "${file.name}"${isImageHeavy ? " with AI Vision..." : "..."}`);
 
       const body: any = {
@@ -207,11 +207,16 @@ export function useAgentChat(userId: string | null) {
         documentText: text,
         mimeType: file.type,
         fileSize: file.size,
+        pageCount,
       };
 
-      // June 5 behavior: always send PDF page images so the backend can OCR scanned/visual PDFs when needed.
+      // Send raw PDF only for text-poor/scanned PDFs; this lets backend Gemini Vision OCR all pages
+      // without forcing slow canvas uploads for normal text-based PDFs.
+      if (isImageHeavy && pdfBase64) {
+        body.pdfBase64 = pdfBase64;
+      }
       if (pageImages.length > 0) {
-        body.pageImages = pageImages.slice(0, 10);
+        body.pageImages = pageImages.slice(0, 16);
       }
 
       const resp = await fetch(PROCESS_URL, {

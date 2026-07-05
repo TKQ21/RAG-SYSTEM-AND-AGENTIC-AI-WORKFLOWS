@@ -65,10 +65,23 @@ function mergePdfItems(items: unknown[]): string {
 export interface PdfExtractionResult {
   text: string;
   pageImages: string[]; // base64 JPEG images of each page
+  pdfBase64?: string;
+  pageCount: number;
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
-  const data = new Uint8Array(await file.arrayBuffer());
+  const buffer = await file.arrayBuffer();
+  const data = new Uint8Array(buffer);
+  const pdfBase64 = file.size <= 20 * 1024 * 1024 ? uint8ToBase64(data) : undefined;
   const loadingTask = getDocument({
     data,
     useWorkerFetch: false,
@@ -80,7 +93,8 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
   try {
     const pages: string[] = [];
     const pageImages: string[] = [];
-    const maxPages = Math.min(pdf.numPages, 30); // June 5 behavior: render strong OCR previews, capped for payload safety
+    const maxPages = pdf.numPages;
+    const maxFallbackImages = 16;
 
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
@@ -88,22 +102,26 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
       // Extract text
       const textContent = await page.getTextContent();
       const pageText = mergePdfItems(textContent.items);
-      if (pageText) pages.push(pageText);
+      if (pageText) pages.push(`[Page ${pageNumber}]\n${pageText}`);
 
-      // Render page to canvas for vision extraction. Keep June 5 OCR quality so scanned PDFs stay readable.
-      try {
-        const viewport = page.getViewport({ scale: 1.5 });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d")!;
-        await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-        const imageData = canvas.toDataURL("image/jpeg", 0.85);
-        const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
-        pageImages.push(base64Only);
-        canvas.remove();
-      } catch (renderErr) {
-        console.warn(`Failed to render page ${pageNumber} to image:`, renderErr);
+      // Only render fallback page images for text-poor pages. The backend receives the raw PDF
+      // for full Gemini Vision OCR, so text PDFs no longer waste upload time rasterizing every page.
+      const readableChars = pageText.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+      if (readableChars < 80 && pageImages.length < maxFallbackImages) {
+        try {
+          const viewport = page.getViewport({ scale: 1.35 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d")!;
+          await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+          const imageData = canvas.toDataURL("image/jpeg", 0.78);
+          const base64Only = imageData.replace(/^data:image\/jpeg;base64,/, "");
+          pageImages.push(base64Only);
+          canvas.remove();
+        } catch (renderErr) {
+          console.warn(`Failed to render page ${pageNumber} to image:`, renderErr);
+        }
       }
 
       page.cleanup();
@@ -112,6 +130,8 @@ async function extractPdfWithImages(file: File): Promise<PdfExtractionResult> {
     return {
       text: normalizeExtractedText(pages.join("\n\n")),
       pageImages,
+      pdfBase64,
+      pageCount: pdf.numPages,
     };
   } finally {
     void pdf.destroy();
@@ -271,18 +291,22 @@ export async function extractDocumentWithImages(file: File): Promise<{
   text: string;
   pageImages: string[];
   isImageHeavy: boolean;
+  pdfBase64?: string;
+  pageCount?: number;
 }> {
   const extension = getFileExtension(file.name);
 
   if (file.type === "application/pdf" || extension === "pdf") {
     const result = await extractPdfWithImages(file);
     // Determine if PDF is image-heavy (little text extracted relative to pages)
-    const avgTextPerPage = result.text.length / Math.max(result.pageImages.length, 1);
-    const isImageHeavy = avgTextPerPage < 100 || result.pageImages.length > 0;
+    const avgTextPerPage = result.text.length / Math.max(result.pageCount, 1);
+    const isImageHeavy = result.text.length < 500 || avgTextPerPage < 120;
     return {
       text: result.text,
       pageImages: result.pageImages,
       isImageHeavy,
+      pdfBase64: result.pdfBase64,
+      pageCount: result.pageCount,
     };
   }
 
