@@ -214,7 +214,8 @@ export function useAgentChat(userId: string | null) {
       // without forcing slow canvas uploads for normal text-based PDFs.
       if (isImageHeavy && pdfBase64) {
         body.pdfBase64 = pdfBase64;
-      } else if (pageImages.length > 0) {
+      }
+      if (pageImages.length > 0) {
         body.pageImages = pageImages.slice(0, 16);
       }
 
