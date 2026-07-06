@@ -32,6 +32,7 @@ export function useAgentChat(userId: string | null) {
   const [totalChunks, setTotalChunks] = useState(0);
   const [totalQueries, setTotalQueries] = useState(0);
   const [sessionId, setSessionId] = useState(() => getSessionId(userId));
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
 
   useEffect(() => { setSessionId(getSessionId(userId)); }, [userId]);
 
@@ -76,9 +77,13 @@ export function useAgentChat(userId: string | null) {
           uploadedAt: new Date(d.created_at).getTime(),
         })));
         setTotalChunks(data.reduce((s: number, d: any) => s + (d.chunk_count || 0), 0));
+        // Default active document = most recently uploaded (first, since desc order).
+        if (data.length > 0) setActiveDocumentId(data[0].id);
+        else setActiveDocumentId(null);
       } else {
         setDocuments([]);
         setTotalChunks(0);
+        setActiveDocumentId(null);
       }
     })();
   }, [sessionId, userId]);
@@ -121,7 +126,7 @@ export function useAgentChat(userId: string | null) {
       const resp = await fetch(CHAT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: await getAuthHeader() },
-        body: JSON.stringify({ messages: apiMessages, mode, sessionId }),
+        body: JSON.stringify({ messages: apiMessages, mode, sessionId, activeDocumentId }),
       });
 
       if (!resp.ok) {
@@ -191,7 +196,7 @@ export function useAgentChat(userId: string | null) {
       setIsProcessing(false);
       setCurrentSteps([]);
     }
-  }, [isProcessing, messages, mode, addStep, updateStep, sessionId]);
+  }, [isProcessing, messages, mode, addStep, updateStep, sessionId, activeDocumentId]);
 
   const uploadDocument = useCallback(async (file: File) => {
     const docId = generateId();
@@ -231,8 +236,10 @@ export function useAgentChat(userId: string | null) {
       }
 
       const result = await resp.json();
-      setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, chunks: result.chunkCount } : d));
+      setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, id: result.documentId || d.id, chunks: result.chunkCount } : d));
       setTotalChunks((c) => c + result.chunkCount);
+      // The newly uploaded document becomes the active/preferred document for follow-up questions.
+      if (result.documentId) setActiveDocumentId(result.documentId);
       toast.success(`"${file.name}" processed: ${result.chunkCount} chunks stored`);
     } catch (e) {
       console.error("Upload error:", e);
@@ -243,6 +250,7 @@ export function useAgentChat(userId: string | null) {
 
   const removeDocument = useCallback(async (id: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+    setActiveDocumentId((cur) => (cur === id ? null : cur));
     // Cascade-style delete via RLS: remove chunks then document
     await supabase.from("document_chunks").delete().eq("document_id", id);
     await supabase.from("documents").delete().eq("id", id);
@@ -284,5 +292,5 @@ export function useAgentChat(userId: string | null) {
     setCurrentSteps([]);
   }, [userId]);
 
-  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat };
+  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat, activeDocumentId, setActiveDocumentId };
 }
