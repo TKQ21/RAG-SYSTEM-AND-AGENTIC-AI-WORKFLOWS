@@ -946,6 +946,37 @@ serve(async (req) => {
         .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0))
         .slice(0, 45);
 
+      // Prefer the most recently uploaded / active document. Only fall back to
+      // other documents when the active one has nothing relevant at all.
+      if (preferredDocId) {
+        const preferred = chunks.filter((c) => c.document_id === preferredDocId);
+        const hasSignal = preferred.some(
+          (c) => (c.hybridScore || 0) > 0.12 || (c.keywordScore || 0) > 0.15 || (c.similarity || 0) > 0.35,
+        );
+        if (preferred.length > 0 && hasSignal) {
+          chunks = preferred;
+        } else if (preferred.length === 0) {
+          // No hits at all from active doc in vector/keyword search — try a direct
+          // scan of that doc's chunks so the user's active document is always tried first.
+          const { data: docChunks } = await supabase
+            .from("document_chunks")
+            .select("id,document_id,document_name,content,chunk_index,page_num")
+            .eq("user_id", userId)
+            .eq("document_id", preferredDocId)
+            .order("chunk_index", { ascending: true })
+            .limit(120);
+          const scored = ((docChunks || []) as any[])
+            .map((row) => {
+              const kScore = keywordScore(userQuery, row.content);
+              return { ...row, similarity: 0, keywordScore: kScore, hybridScore: kScore } as RetrievedChunk;
+            })
+            .filter((r) => (r.keywordScore || 0) > 0)
+            .sort((a, b) => (b.hybridScore || 0) - (a.hybridScore || 0));
+          if (scored.length > 0) chunks = scored.slice(0, 45);
+          // else: leave chunks as-is (all-docs fallback)
+        }
+      }
+
       chunks = await expandDocumentContext(supabase, userId, chunks, userQuery);
 
       console.log(
