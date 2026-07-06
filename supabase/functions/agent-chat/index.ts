@@ -850,6 +850,8 @@ serve(async (req) => {
     const userId = userData.user.id;
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
     const { messages, mode, sessionId } = await req.json();
+    const { activeDocumentId } = (await Promise.resolve({} as any), {}) as any;
+    // NOTE: activeDocumentId is read below from the original body; re-parse safely.
     const safeMessages: Message[] = Array.isArray(messages) ? messages : [];
     const userQuery = String(safeMessages[safeMessages.length - 1]?.content || "").trim();
 
