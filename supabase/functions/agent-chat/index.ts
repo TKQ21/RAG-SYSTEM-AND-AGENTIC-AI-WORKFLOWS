@@ -22,6 +22,10 @@ type RetrievedChunk = {
 
 const LOVABLE_KEY = Deno.env.get("LOVABLE_API_KEY")!;
 const GATEWAY = "https://ai.gateway.lovable.dev/v1";
+const CHAT_MODEL = "google/gemini-2.5-flash";
+const DEFAULT_MAX_TOKENS = 8192;
+const LONG_FORM_MAX_TOKENS = 32768;
+const LONG_FORM_CONTINUATION_ROUNDS = 3;
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -823,8 +827,133 @@ async function saveAssistantResponse(stream: ReadableStream<Uint8Array>, supabas
   }
 }
 
-const PROMPT_DS = `You are a senior Data Science & ML Engineering assistant. Provide complete, runnable code with concise explanations.`;
-const PROMPT_RES = `You are an autonomous research agent. Break down questions into sub-tasks and provide structured reports with citations.`;
+function sseDelta(text: string): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+}
+
+function sseDone(): Uint8Array {
+  return new TextEncoder().encode("data: [DONE]\n\n");
+}
+
+function isTokenLimitFinish(reason: unknown): boolean {
+  return typeof reason === "string" && /^(length|max_tokens|max_output_tokens)$/i.test(reason);
+}
+
+async function streamLongFormCompletion({
+  baseMessages,
+  maxTokens,
+  continuationRounds,
+  supabase,
+  sessionId,
+  userId,
+}: {
+  baseMessages: Message[];
+  maxTokens: number;
+  continuationRounds: number;
+  supabase: any;
+  sessionId: string | null;
+  userId: string;
+}): Promise<Response> {
+  let saved = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let full = "";
+      let messages = baseMessages;
+      try {
+        for (let round = 0; round <= continuationRounds; round += 1) {
+          const response = await gatewayFetch("/chat/completions", {
+            model: CHAT_MODEL,
+            messages,
+            stream: true,
+            temperature: 0,
+            max_tokens: maxTokens,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("AI gateway continuation error:", response.status, errorText);
+            if (!full.trim()) throw new Error(response.status === 429 ? "Rate limits exceeded, please try again later." : response.status === 402 ? "Lovable AI credits exhausted. Please add credits in Workspace Usage." : "AI response failed.");
+            controller.enqueue(sseDelta("\n\n⚠️ Response stopped early because the AI call failed while continuing. Please ask 'continue' if you need the rest."));
+            break;
+          }
+          if (!response.body) throw new Error("AI response stream missing");
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let tokenLimited = false;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let nl: number;
+            while ((nl = buffer.indexOf("\n")) !== -1) {
+              let line = buffer.slice(0, nl);
+              buffer = buffer.slice(nl + 1);
+              if (line.endsWith("\r")) line = line.slice(0, -1);
+              if (line.startsWith(":")) continue;
+              if (!line.startsWith("data: ")) continue;
+              const json = line.slice(6).trim();
+              if (!json || json === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(json);
+                const choice = parsed.choices?.[0];
+                const delta = choice?.delta?.content as string | undefined;
+                if (delta) {
+                  full += delta;
+                  controller.enqueue(sseDelta(delta));
+                }
+                if (isTokenLimitFinish(choice?.finish_reason)) tokenLimited = true;
+              } catch (error) {
+                console.error("SSE parse error:", error);
+              }
+            }
+          }
+
+          if (!tokenLimited) break;
+          if (round === continuationRounds) {
+            controller.enqueue(sseDelta("\n\n⚠️ Response reached the maximum continuation limit. Ask 'continue from here' for the remaining part."));
+            break;
+          }
+
+          messages = [
+            ...baseMessages,
+            { role: "assistant", content: full },
+            {
+              role: "user",
+              content:
+                "Continue the previous answer exactly from where it stopped. Do not restart, do not repeat earlier sections, and finish all remaining code/steps/report sections completely.",
+            },
+          ];
+        }
+
+        if (sessionId && full.trim()) {
+          const { error } = await supabase.from("chat_history").insert({ session_id: sessionId, role: "assistant", message: full, user_id: userId });
+          if (error) console.error("history save failed:", error.message);
+        }
+        saved = true;
+        controller.enqueue(sseDone());
+        controller.close();
+      } catch (error) {
+        console.error("long-form stream failed:", error);
+        const message = error instanceof Error ? error.message : "AI response failed.";
+        if (!saved) controller.enqueue(sseDelta(`⚠️ Error: ${message}`));
+        controller.enqueue(sseDone());
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+}
+
+const PROMPT_DS = `You are a senior Data Science & ML Engineering assistant.
+Generate complete answers, never ending mid-sentence or mid-code.
+For coding tasks: provide runnable code, imports, setup assumptions, explanation, edge cases, and validation steps.
+If the answer is long, continue until the full solution is complete. Temperature is 0.`;
+const PROMPT_RES = `You are an autonomous research agent.
+Generate complete structured reports with sub-tasks, findings, comparisons, limitations, and citations/references when available.
+Never stop in the middle of a section. If the answer is long, continue until the report is complete. Temperature is 0.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -1018,12 +1147,28 @@ serve(async (req) => {
 
     aiMessages.push(...safeMessages);
 
+    const maxTokens = mode === "datascience" || mode === "research" ? LONG_FORM_MAX_TOKENS : DEFAULT_MAX_TOKENS;
+    const continuationRounds = mode === "datascience" || mode === "research" ? LONG_FORM_CONTINUATION_ROUNDS : 0;
+
+    if (mode === "datascience" || mode === "research") {
+      // DS Helper and Auto Research often need long code/reports. Proxy the stream so
+      // provider [DONE] is only sent after automatic continuation rounds finish.
+      return streamLongFormCompletion({
+        baseMessages: aiMessages,
+        maxTokens,
+        continuationRounds,
+        supabase,
+        sessionId: sessionId || null,
+        userId,
+      });
+    }
+
     const response = await gatewayFetch("/chat/completions", {
-      model: "google/gemini-2.5-flash",
+      model: CHAT_MODEL,
       messages: aiMessages,
       stream: true,
       temperature: 0,
-      max_tokens: 8192,
+      max_tokens: maxTokens,
     });
 
     if (!response.ok) {
@@ -1060,6 +1205,7 @@ serve(async (req) => {
     }
 
     if (!response.body) throw new Error("AI response stream missing");
+
     const [clientStream, historyStream] = response.body.tee();
     if (sessionId) saveAssistantResponse(historyStream, supabase, sessionId, userId);
 
