@@ -1150,6 +1150,19 @@ serve(async (req) => {
     const maxTokens = mode === "datascience" || mode === "research" ? LONG_FORM_MAX_TOKENS : DEFAULT_MAX_TOKENS;
     const continuationRounds = mode === "datascience" || mode === "research" ? LONG_FORM_CONTINUATION_ROUNDS : 0;
 
+    if (mode === "datascience" || mode === "research") {
+      // DS Helper and Auto Research often need long code/reports. Proxy the stream so
+      // provider [DONE] is only sent after automatic continuation rounds finish.
+      return streamLongFormCompletion({
+        baseMessages: aiMessages,
+        maxTokens,
+        continuationRounds,
+        supabase,
+        sessionId: sessionId || null,
+        userId,
+      });
+    }
+
     const response = await gatewayFetch("/chat/completions", {
       model: CHAT_MODEL,
       messages: aiMessages,
@@ -1192,20 +1205,6 @@ serve(async (req) => {
     }
 
     if (!response.body) throw new Error("AI response stream missing");
-
-    if (mode === "datascience" || mode === "research") {
-      // DS Helper and Auto Research often need long code/reports. Proxy the stream so
-      // provider [DONE] is only sent after automatic continuation rounds finish.
-      response.body.cancel().catch(() => {});
-      return streamLongFormCompletion({
-        baseMessages: aiMessages,
-        maxTokens,
-        continuationRounds,
-        supabase,
-        sessionId: sessionId || null,
-        userId,
-      });
-    }
 
     const [clientStream, historyStream] = response.body.tee();
     if (sessionId) saveAssistantResponse(historyStream, supabase, sessionId, userId);
