@@ -208,8 +208,10 @@ CRITICAL RULES:
     (d) Count strictly from 1 (1-based). Do NOT skip articles, numbers, or symbols inside the sentence.
     (e) Reply in this exact format: 'The Nth word of <target> is "<word>". Full sentence: "<sentence>". Tokens: 1) <w1> 2) <w2> ...'  so the user can verify the count.
     (f) If the target sentence isn't clearly present, say "The exact sentence for <target> is not in the retrieved context." — do NOT guess.
-15. End every answer with citations, max 3, one per line:
-📌 Source: [filename] | Chunk #[n]
+15. CITATIONS (mandatory, two levels):
+    (a) Inline: right after each fact/sentence taken from the context, add a compact marker [filename, p.N] using the File and Page values shown in the context header. Group repeated markers instead of repeating the same one twice in a row.
+    (b) At the end, list up to 3 sources, one per line, in this exact format:
+📌 Source: [filename] | Page [N] | Chunk #[n]
 Temperature is 0: deterministic, no guessing.`;
 }
 
@@ -217,7 +219,7 @@ function buildContext(chunks: RetrievedChunk[]): string {
   return chunks
     .map(
       (c) =>
-        `[Chunk #${c.chunk_index} | File: ${c.document_name} | Sim: ${Math.round((c.similarity || 0) * 100)}% | KW: ${Math.round((c.keywordScore || 0) * 100)}%]\n${c.content}`,
+        `[Chunk #${c.chunk_index} | File: ${c.document_name} | Page: ${c.page_num ?? 1} | Sim: ${Math.round((c.similarity || 0) * 100)}% | KW: ${Math.round((c.keywordScore || 0) * 100)}%]\n${c.content}`,
     )
     .join("\n\n---\n\n")
     .slice(0, 70000);

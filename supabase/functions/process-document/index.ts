@@ -181,6 +181,34 @@ function chunkText(text: string, chunkSize = 950, overlap = 180): string[] {
 }
 
 function chunkSpreadsheetRows(clean: string): string[] {
+  return chunkSpreadsheetRowsImpl(clean);
+}
+
+/**
+ * Maps a character offset in the full document text to the page/slide number that
+ * offset falls inside, using the `[Page N]` markers produced by the extractors.
+ */
+function buildPageIndex(fullText: string): { offset: number; page: number }[] {
+  const index: { offset: number; page: number }[] = [];
+  const re = /\[Page (\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fullText)) !== null) {
+    index.push({ offset: m.index, page: Number(m[1]) });
+  }
+  return index;
+}
+
+function pageForOffset(index: { offset: number; page: number }[], offset: number): number {
+  if (!index.length) return 1;
+  let page = index[0].page;
+  for (const entry of index) {
+    if (entry.offset <= offset) page = entry.page;
+    else break;
+  }
+  return page || 1;
+}
+
+function chunkSpreadsheetRowsImpl(clean: string): string[] {
   if (!/(^|\n)## Rows \(structured\)(\n|$)/i.test(clean) || !/(^|\n)Row\s+\d+\s*:/i.test(clean)) return [];
 
   const chunks: string[] = [];
@@ -303,6 +331,7 @@ serve(async (req) => {
 
     const chunks = chunkText(fullText);
     console.log(`"${documentName}": ${chunks.length} chunks`);
+    const pageIndex = buildPageIndex(fullText);
 
     // Batch embeddings into one gateway request per group to avoid rate limits and scale to large documents.
     const EMBED_BATCH = 64;
@@ -343,7 +372,7 @@ serve(async (req) => {
           chunk_index: idx,
           content: slice[j],
           embedding: JSON.stringify(vectors[j]),
-          page_num: 1,
+          page_num: pageForOffset(pageIndex, pos.realStart),
           start_char: pos.realStart,
           end_char: pos.realStart + slice[j].length,
           user_id: userId,

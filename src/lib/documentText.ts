@@ -2,6 +2,7 @@ import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -260,6 +261,72 @@ function isSpreadsheet(file: File): boolean {
   );
 }
 
+function isPresentation(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return ext === "pptx" || ext === "ppt" || file.type.includes("presentationml");
+}
+
+function isMarkdown(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return ext === "md" || ext === "markdown" || ext === "mdx" || file.type === "text/markdown";
+}
+
+function xmlToPlainText(xml: string): string {
+  return xml
+    .replace(/<a:br\s*\/>/g, "\n")
+    .replace(/<\/a:p>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
+/**
+ * PowerPoint (.pptx) extraction: reads slide XML + speaker notes from the OOXML zip.
+ * Each slide is labelled as a page so citations can reference slide numbers.
+ */
+async function extractPresentation(file: File): Promise<string> {
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const slidePaths = Object.keys(zip.files)
+    .filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
+    .sort((a, b) => {
+      const n = (s: string) => Number(s.match(/slide(\d+)\.xml$/)?.[1] || 0);
+      return n(a) - n(b);
+    });
+
+  const parts: string[] = [];
+  for (let i = 0; i < slidePaths.length; i += 1) {
+    const slideNumber = i + 1;
+    const xml = await zip.file(slidePaths[i])!.async("string");
+    const body = xmlToPlainText(xml);
+
+    const notesPath = `ppt/notesSlides/notesSlide${slideNumber}.xml`;
+    let notes = "";
+    const notesFile = zip.file(notesPath);
+    if (notesFile) notes = xmlToPlainText(await notesFile.async("string"));
+
+    const block = [`[Page ${slideNumber}]`, `# Slide ${slideNumber}`, body];
+    if (notes) block.push(`Speaker notes: ${notes}`);
+    if (body || notes) parts.push(block.join("\n"));
+  }
+
+  if (!parts.length) {
+    throw new Error("No readable text found in this presentation. Legacy .ppt files must be saved as .pptx.");
+  }
+  return normalizeExtractedText(parts.join("\n\n"));
+}
+
+async function extractPlainOrMarkdown(file: File): Promise<string> {
+  const raw = await file.text();
+  // Markdown is already structured text — keep headings/tables intact for table extraction + citations.
+  return normalizeExtractedText(isMarkdown(file) ? raw.replace(/\r\n?/g, "\n") : raw);
+}
+
 export async function extractDocumentText(file: File): Promise<string> {
   const extension = getFileExtension(file.name);
 
@@ -274,11 +341,13 @@ export async function extractDocumentText(file: File): Promise<string> {
   } else if (isSpreadsheet(file)) {
     extractedText = await extractSpreadsheet(file);
   } else {
-    extractedText = normalizeExtractedText(await file.text());
+    extractedText = isPresentation(file)
+      ? await extractPresentation(file)
+      : await extractPlainOrMarkdown(file);
   }
 
   if (!hasReadableText(extractedText)) {
-    throw new Error("Readable text could not be extracted from this file. Please upload a text-based PDF/TXT/DOCX file.");
+    throw new Error("Readable text could not be extracted from this file. Supported: PDF, DOCX, TXT, MD, CSV, XLSX, PPTX.");
   }
 
   return extractedText;
@@ -322,6 +391,12 @@ export async function extractDocumentWithImages(file: File): Promise<{
     return { text, pageImages: [], isImageHeavy: false };
   }
 
-  const text = normalizeExtractedText(await file.text());
+  if (isPresentation(file)) {
+    const text = await extractPresentation(file);
+    const slideCount = (text.match(/\[Page \d+\]/g) || []).length;
+    return { text, pageImages: [], isImageHeavy: false, pageCount: slideCount || 1 };
+  }
+
+  const text = await extractPlainOrMarkdown(file);
   return { text, pageImages: [], isImageHeavy: false };
 }
