@@ -49,7 +49,7 @@ export default function Knowledge() {
         maxPages,
         apiKeyHeader: headerName.trim() || undefined,
         apiKeyValue: headerValue.trim() || undefined,
-        replaceExistingName: reindex ? undefined : undefined,
+        reindex,
       });
       setLog((prev) => [
         `${result.documentName} — ${result.chunkCount} chunks from ${result.pageCount} page(s)`,
