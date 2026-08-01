@@ -118,6 +118,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
         onSelectSession={(sid) => loadSession(sid)}
         isOpen={historyOpen}
         onClose={() => setHistoryOpen(false)}
+        onNewChat={newChat}
       />
 
       <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden">

@@ -290,6 +290,12 @@ export function useAgentChat(userId: string | null) {
     setSessionId(fresh);
     setMessages([]);
     setCurrentSteps([]);
+    if (userId) {
+      supabase
+        .from("chat_sessions")
+        .upsert({ user_id: userId, session_id: fresh, title: "New Chat" }, { onConflict: "user_id,session_id" })
+        .then(({ error }) => { if (error) console.error("create session failed", error); });
+    }
   }, [userId]);
 
   return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat, activeDocumentId, setActiveDocumentId };
