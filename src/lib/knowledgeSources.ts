@@ -43,8 +43,8 @@ export interface IngestOptions {
   maxPages?: number;
   apiKeyHeader?: string;
   apiKeyValue?: string;
-  /** Re-index: replaces chunks of an existing source with the same name. */
-  replaceExistingName?: string;
+  /** Re-index: replaces chunks of a previously indexed copy of the same source. */
+  reindex?: boolean;
 }
 
 export interface IngestResult {
@@ -75,11 +75,11 @@ export async function ingestExternalSource(options: IngestOptions): Promise<Inge
   const documentName = `${fetched.sourceName}`;
 
   // Incremental re-index: drop the previous version of this source before storing the new one.
-  if (options.replaceExistingName) {
+  if (options.reindex) {
     const { data: existing } = await supabase
       .from("documents")
       .select("id")
-      .eq("name", options.replaceExistingName);
+      .eq("name", documentName);
     for (const row of existing || []) {
       await supabase.from("document_chunks").delete().eq("document_id", row.id);
       await supabase.from("documents").delete().eq("id", row.id);
