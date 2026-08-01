@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
-import { User, Bot, Copy, Check } from "lucide-react";
+import { User, Bot, Copy, Check, Quote } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentSteps } from "./AgentSteps";
+import { parseAnswerCitations } from "@/lib/citations";
 import type { ChatMessage as ChatMessageType } from "@/types/agent";
 
 interface ChatMessageProps {
@@ -13,6 +14,9 @@ interface ChatMessageProps {
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
+  const { body, citations } = isUser
+    ? { body: message.content, citations: [] as ReturnType<typeof parseAnswerCitations>["citations"] }
+    : parseAnswerCitations(message.content);
 
   const handleCopy = async () => {
     try {
@@ -52,7 +56,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
                  ? "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.12), transparent 70%)"
                  : "radial-gradient(120% 80% at 50% 0%, hsl(330 100% 62% / 0.1), transparent 70%)" }} />
           <div className="relative z-10">
-            <MessageContent content={message.content} />
+            <MessageContent content={body} />
+            {!isUser && citations.length > 0 && <SourcesPanel citations={citations} />}
           </div>
           {!isUser && message.content && (
             <button
