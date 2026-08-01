@@ -62,11 +62,11 @@ export function DocumentPanel({ documents, onUpload, onRemove }: DocumentPanelPr
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-primary">Click to upload</span> or drag & drop
         </div>
-        <div className="text-[10px] text-muted-foreground/60">PDF, TXT, DOCX, XLSX, CSV</div>
+        <div className="text-[10px] text-muted-foreground/60">PDF · DOCX · TXT · MD · CSV · XLSX · PPTX</div>
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.txt,.docx,.xlsx,.xls,.csv"
+          accept=".pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.pptx"
           multiple
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
