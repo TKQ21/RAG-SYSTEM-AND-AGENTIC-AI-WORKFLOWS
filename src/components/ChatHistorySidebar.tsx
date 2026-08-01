@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageSquare, Search, Trash2, X, Clock } from "lucide-react";
+import { MessageSquare, Search, Trash2, X, Clock, Pencil, Plus, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface ChatSession {
@@ -8,6 +8,7 @@ interface ChatSession {
   first_message: string;
   last_message_at: string;
   message_count: number;
+  title?: string | null;
 }
 
 interface ChatHistorySidebarProps {
@@ -15,22 +16,35 @@ interface ChatHistorySidebarProps {
   onSelectSession: (sessionId: string) => void;
   isOpen: boolean;
   onClose: () => void;
+  onNewChat?: () => void;
 }
 
-export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, onClose }: ChatHistorySidebarProps) {
+export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, onClose, onNewChat }: ChatHistorySidebarProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from("chat_history")
-        .select("session_id, message, created_at")
-        .eq("role", "user")
-        .order("created_at", { ascending: false })
-        .limit(500);
+      const [{ data }, { data: titleRows }] = await Promise.all([
+        supabase
+          .from("chat_history")
+          .select("session_id, message, created_at")
+          .eq("role", "user")
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase
+          .from("chat_sessions")
+          .select("session_id, title, updated_at")
+          .order("updated_at", { ascending: false }),
+      ]);
+
+      const titleMap = new Map<string, string>();
+      for (const t of titleRows || []) titleMap.set(t.session_id, t.title);
 
       if (data) {
         const sessionMap = new Map<string, ChatSession>();
@@ -41,10 +55,23 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
               first_message: row.message.slice(0, 80),
               last_message_at: row.created_at || "",
               message_count: 1,
+              title: titleMap.get(row.session_id) || null,
             });
           } else {
             const s = sessionMap.get(row.session_id)!;
             s.message_count++;
+          }
+        }
+        // Include renamed/saved sessions that have no messages yet
+        for (const t of titleRows || []) {
+          if (!sessionMap.has(t.session_id)) {
+            sessionMap.set(t.session_id, {
+              session_id: t.session_id,
+              first_message: "",
+              last_message_at: t.updated_at || "",
+              message_count: 0,
+              title: t.title,
+            });
           }
         }
         setSessions(Array.from(sessionMap.values()));
@@ -60,24 +87,52 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
     if (isOpen) loadSessions();
   }, [isOpen, loadSessions]);
 
+  const startRename = (session: ChatSession) => {
+    setEditingId(session.session_id);
+    setEditValue(session.title || session.first_message || "New Chat");
+    requestAnimationFrame(() => editInputRef.current?.focus());
+  };
+
+  const saveRename = async (sessionId: string) => {
+    const title = editValue.trim();
+    setEditingId(null);
+    if (!title) return;
+    const { data: auth } = await supabase.auth.getUser();
+    const uid = auth.user?.id;
+    if (!uid) return;
+    const { error } = await supabase
+      .from("chat_sessions")
+      .upsert({ user_id: uid, session_id: sessionId, title }, { onConflict: "user_id,session_id" });
+    if (error) {
+      console.error("rename failed", error);
+      return;
+    }
+    setSessions((prev) => prev.map((s) => (s.session_id === sessionId ? { ...s, title } : s)));
+  };
+
   const deleteSession = async (sessionId: string) => {
     const { error } = await supabase.from("chat_history").delete().eq("session_id", sessionId);
     if (error) {
       console.error("delete session failed", error);
       return;
     }
+    await supabase.from("chat_sessions").delete().eq("session_id", sessionId);
     setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
     // If user deleted the active session, start a fresh one and reload UI
     if (sessionId === currentSessionId) {
       const fresh = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      sessionStorage.setItem("rag_session_id", fresh);
+      const { data: auth } = await supabase.auth.getUser();
+      const key = auth.user?.id ? `rag_session_id_${auth.user.id}` : "rag_session_id";
+      localStorage.setItem(key, fresh);
       window.location.reload();
     }
   };
 
-  const filtered = sessions.filter((s) =>
-    searchQuery ? s.first_message.toLowerCase().includes(searchQuery.toLowerCase()) : true
-  );
+  const filtered = sessions.filter((s) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (s.title || "").toLowerCase().includes(q) || s.first_message.toLowerCase().includes(q);
+  });
 
   const formatTime = (dateStr: string) => {
     if (!dateStr) return "";
@@ -109,9 +164,20 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
               <MessageSquare className="h-4 w-4 text-neon-pink" />
               <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">Chat History</h2>
             </div>
-            <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors">
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              {onNewChat && (
+                <button
+                  onClick={() => { onNewChat(); onClose(); }}
+                  className="flex items-center gap-1 rounded-lg border border-neon-cyan/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neon-cyan hover:bg-neon-cyan/10 transition-colors"
+                  title="New Chat"
+                >
+                  <Plus className="h-3.5 w-3.5" /> New
+                </button>
+              )}
+              <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* Search */}
@@ -160,19 +226,50 @@ export function ChatHistorySidebar({ currentSessionId, onSelectSession, isOpen, 
                 >
                   <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon-pink/70" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-foreground">{session.first_message}</p>
+                    {editingId === session.session_id ? (
+                      <input
+                        ref={editInputRef}
+                        value={editValue}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); saveRename(session.session_id); }
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                        onBlur={() => saveRename(session.session_id)}
+                        className="w-full rounded border border-neon-cyan/40 bg-secondary/60 px-1.5 py-0.5 text-xs text-foreground focus:outline-none"
+                      />
+                    ) : (
+                      <p className="truncate text-xs font-medium text-foreground">
+                        {session.title || session.first_message || "New Chat"}
+                      </p>
+                    )}
                     <div className="mt-1 flex items-center gap-2">
                       <Clock className="h-2.5 w-2.5 text-muted-foreground/60" />
                       <span className="text-[10px] text-muted-foreground/60">{formatTime(session.last_message_at)}</span>
                       <span className="text-[10px] text-muted-foreground/40">· {session.message_count} msgs</span>
                     </div>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteSession(session.session_id); }}
-                    className="shrink-0 rounded p-1 text-muted-foreground/40 opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive group-hover:opacity-100"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (editingId === session.session_id) saveRename(session.session_id);
+                        else startRename(session);
+                      }}
+                      title="Rename chat"
+                      className="rounded p-1 text-muted-foreground/40 opacity-0 transition-all hover:bg-neon-cyan/20 hover:text-neon-cyan group-hover:opacity-100"
+                    >
+                      {editingId === session.session_id ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteSession(session.session_id); }}
+                      title="Delete chat"
+                      className="rounded p-1 text-muted-foreground/40 opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </motion.div>
               ))
             )}
