@@ -148,7 +148,12 @@ function buildVariants(question: string): string[] {
   return Array.from(new Set([question, norm, keywords(question).join(" "), expanded].filter((s) => s && s.length > 1)));
 }
 
-async function keywordFallbackSearch(supabase: any, question: string, userId: string): Promise<RetrievedChunk[]> {
+// Restrict a document_chunks query to one knowledge space when the user has a space selected.
+function scopeSpace(query: any, spaceId: string | null) {
+  return spaceId ? query.eq("space_id", spaceId) : query;
+}
+
+async function keywordFallbackSearch(supabase: any, question: string, userId: string, spaceId: string | null = null): Promise<RetrievedChunk[]> {
   const terms = expandedKeywords(question)
     .filter((term) => (/\d/.test(term) || term.length >= 3) && !/^(isme|kis|kya|hai)$/.test(term))
     .slice(0, 14);
@@ -160,10 +165,13 @@ async function keywordFallbackSearch(supabase: any, question: string, userId: st
     .join(",");
   if (!orFilter) return [];
 
-  const { data, error } = await supabase
-    .from("document_chunks")
-    .select("id,document_id,document_name,content,chunk_index,page_num")
-    .eq("user_id", userId)
+  const { data, error } = await scopeSpace(
+    supabase
+      .from("document_chunks")
+      .select("id,document_id,document_name,content,chunk_index,page_num")
+      .eq("user_id", userId),
+    spaceId,
+  )
     .or(orFilter)
     .limit(60);
   if (error) {
@@ -234,6 +242,7 @@ async function expandDocumentContext(
   userId: string,
   chunks: RetrievedChunk[],
   question: string,
+  spaceId: string | null = null,
 ): Promise<RetrievedChunk[]> {
   if (!chunks.length) return chunks;
   const wide = isDeepIntent(question);
@@ -244,10 +253,13 @@ async function expandDocumentContext(
 
   if (wide) {
     const docIds = Array.from(new Set(chunks.slice(0, 6).map((c) => c.document_id))).slice(0, 2);
-    const { data, error } = await supabase
-      .from("document_chunks")
-      .select("id,document_id,document_name,content,chunk_index,page_num")
-      .eq("user_id", userId)
+    const { data, error } = await scopeSpace(
+      supabase
+        .from("document_chunks")
+        .select("id,document_id,document_name,content,chunk_index,page_num")
+        .eq("user_id", userId),
+      spaceId,
+    )
       .in("document_id", docIds)
       .order("chunk_index", { ascending: true })
       .limit(350);
@@ -275,11 +287,13 @@ async function expandDocumentContext(
           return `and(document_id.eq.${doc},chunk_index.eq.${idx})`;
         })
         .join(",");
-      const { data, error } = await supabase
-        .from("document_chunks")
-        .select("id,document_id,document_name,content,chunk_index,page_num")
-        .eq("user_id", userId)
-        .or(orFilter);
+      const { data, error } = await scopeSpace(
+        supabase
+          .from("document_chunks")
+          .select("id,document_id,document_name,content,chunk_index,page_num")
+          .eq("user_id", userId),
+        spaceId,
+      ).or(orFilter);
       if (!error) {
         for (const n of (data || []) as any[]) {
           if (!seen.has(n.id)) seen.set(n.id, { ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
@@ -981,8 +995,23 @@ serve(async (req) => {
     const userId = userData.user.id;
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
     const body = await req.json();
-    const { messages, mode, sessionId, activeDocumentId } = body || {};
+    const { messages, mode, sessionId, activeDocumentId, spaceId } = body || {};
     const safeMessages: Message[] = Array.isArray(messages) ? messages : [];
+    const activeSpaceId: string | null = typeof spaceId === "string" && spaceId ? spaceId : null;
+
+    // Private knowledge spaces: verify the caller may read the selected space before retrieving anything.
+    if (activeSpaceId) {
+      const { data: canRead, error: permErr } = await supabase.rpc("can_read_space", {
+        _space_id: activeSpaceId,
+        _user_id: userId,
+      });
+      if (permErr || canRead !== true) {
+        return new Response(JSON.stringify({ error: "You do not have access to this knowledge space" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
     const preferredDocId: string | null =
       typeof activeDocumentId === "string" && activeDocumentId ? activeDocumentId : null;
     const userQuery = String(safeMessages[safeMessages.length - 1]?.content || "").trim();
@@ -1032,6 +1061,7 @@ serve(async (req) => {
             filter_user_id: userId,
             match_threshold: 0.0,
             match_count: 40,
+            filter_space_id: activeSpaceId,
           });
           if (error) {
             console.error("match_document_chunks failed:", error.message);
@@ -1052,14 +1082,14 @@ serve(async (req) => {
 
       // Add literal field-match candidates so identity queries like "admit card kis person ka hai"
       // can still find chunks containing "Name / Roll No / Enrollment" even when those exact words are absent.
-      const keywordResults = await keywordFallbackSearch(supabase, userQuery, userId);
+      const keywordResults = await keywordFallbackSearch(supabase, userQuery, userId, activeSpaceId);
       for (const raw of keywordResults) {
         const prev = seen.get(raw.id);
         if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
       }
       // Also run keyword fallback on the contextualised query so follow-ups still pull the topic chunks.
       if (retrievalQuery !== userQuery) {
-        const ctxResults = await keywordFallbackSearch(supabase, retrievalQuery, userId);
+        const ctxResults = await keywordFallbackSearch(supabase, retrievalQuery, userId, activeSpaceId);
         for (const raw of ctxResults) {
           const prev = seen.get(raw.id);
           if (!prev || (raw.hybridScore || 0) > (prev.hybridScore || 0)) seen.set(raw.id, raw);
@@ -1089,10 +1119,13 @@ serve(async (req) => {
         } else if (preferred.length === 0) {
           // No hits at all from active doc in vector/keyword search — try a direct
           // scan of that doc's chunks so the user's active document is always tried first.
-          const { data: docChunks } = await supabase
-            .from("document_chunks")
-            .select("id,document_id,document_name,content,chunk_index,page_num")
-            .eq("user_id", userId)
+          const { data: docChunks } = await scopeSpace(
+            supabase
+              .from("document_chunks")
+              .select("id,document_id,document_name,content,chunk_index,page_num")
+              .eq("user_id", userId),
+            activeSpaceId,
+          )
             .eq("document_id", preferredDocId)
             .order("chunk_index", { ascending: true })
             .limit(120);
@@ -1108,7 +1141,7 @@ serve(async (req) => {
         }
       }
 
-      chunks = await expandDocumentContext(supabase, userId, chunks, userQuery);
+      chunks = await expandDocumentContext(supabase, userId, chunks, userQuery, activeSpaceId);
 
       console.log(
         JSON.stringify({ event: "retrieval", query: userQuery, retrievalQuery, variants, chunks: chunks.length }),

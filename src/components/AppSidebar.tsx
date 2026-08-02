@@ -3,7 +3,9 @@ import { Link } from "react-router-dom";
 import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus, Network } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
+import { SpaceSelector } from "./SpaceSelector";
 import type { AgentMode, UploadedDocument } from "@/types/agent";
+import type { KnowledgeSpace } from "@/hooks/useSpaces";
 
 const PIPELINE_STEPS = [
   { icon: FileSearch, label: "Ingestion", desc: "OCR & Parse all pages", color: "text-neon-cyan" },
@@ -27,6 +29,9 @@ interface SidebarProps {
   onOpenHistory?: () => void;
   onNewChat?: () => void;
   onCloseMobile?: () => void;
+  spaces?: KnowledgeSpace[];
+  activeSpaceId?: string | null;
+  onSelectSpace?: (id: string | null) => void;
 }
 
 const STAT_STYLES = [
@@ -36,7 +41,7 @@ const STAT_STYLES = [
   { label: "Queries", border: "border-neon-yellow/40", text: "text-neon-yellow", glow: "0 0 14px hsl(48 100% 60% / 0.18)" },
 ];
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onNewChat, onCloseMobile }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onNewChat, onCloseMobile, spaces = [], activeSpaceId = null, onSelectSpace }: SidebarProps) {
   const statValues = [
     documents.length,
     documents.reduce((s, d) => s + (d.chunks || 0), 0),
@@ -75,6 +80,11 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           <span key={b} className="rounded border border-border bg-secondary/50 px-2 py-0.5 font-mono text-[9px] text-muted-foreground">{b}</span>
         ))}
       </div>
+
+      {/* Knowledge space switcher (multi-domain) */}
+      {onSelectSpace && (
+        <SpaceSelector spaces={spaces} activeSpaceId={activeSpaceId} onSelect={onSelectSpace} />
+      )}
 
       {/* Knowledge sources */}
       <div className="border-b border-neon-pink/10 px-4 py-2">

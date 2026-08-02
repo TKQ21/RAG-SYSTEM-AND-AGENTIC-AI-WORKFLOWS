@@ -3,6 +3,7 @@ import { Link, Navigate } from "react-router-dom";
 import { ArrowLeft, Globe, Github, Server, Lock, Loader2, RefreshCw, Plug } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { useSpaces } from "@/hooks/useSpaces";
 import { SOURCE_DEFINITIONS, ingestExternalSource, type SourceDefinition } from "@/lib/knowledgeSources";
 import { VectorStoreSettings } from "@/components/VectorStoreSettings";
 
@@ -15,6 +16,7 @@ function iconFor(source: SourceDefinition) {
 
 export default function Knowledge() {
   const { user, loading } = useAuth();
+  const { activeSpaceId } = useSpaces(user?.id ?? null);
   const [active, setActive] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [maxPages, setMaxPages] = useState(12);
@@ -50,6 +52,7 @@ export default function Knowledge() {
         apiKeyHeader: headerName.trim() || undefined,
         apiKeyValue: headerValue.trim() || undefined,
         reindex,
+        spaceId: activeSpaceId,
       });
       setLog((prev) => [
         `${result.documentName} — ${result.chunkCount} chunks from ${result.pageCount} page(s)`,

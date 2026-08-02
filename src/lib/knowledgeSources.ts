@@ -45,6 +45,8 @@ export interface IngestOptions {
   apiKeyValue?: string;
   /** Re-index: replaces chunks of a previously indexed copy of the same source. */
   reindex?: boolean;
+  /** Knowledge space to index into (null = personal workspace). */
+  spaceId?: string | null;
 }
 
 export interface IngestResult {
@@ -95,6 +97,7 @@ export async function ingestExternalSource(options: IngestOptions): Promise<Inge
       mimeType: "text/markdown",
       fileSize: fetched.charCount,
       pageCount: fetched.pageCount,
+      spaceId: options.spaceId ?? null,
     }),
   });
   const processed = await processRes.json();
