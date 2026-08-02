@@ -242,6 +242,7 @@ async function expandDocumentContext(
   userId: string,
   chunks: RetrievedChunk[],
   question: string,
+  spaceId: string | null = null,
 ): Promise<RetrievedChunk[]> {
   if (!chunks.length) return chunks;
   const wide = isDeepIntent(question);
@@ -252,10 +253,13 @@ async function expandDocumentContext(
 
   if (wide) {
     const docIds = Array.from(new Set(chunks.slice(0, 6).map((c) => c.document_id))).slice(0, 2);
-    const { data, error } = await supabase
-      .from("document_chunks")
-      .select("id,document_id,document_name,content,chunk_index,page_num")
-      .eq("user_id", userId)
+    const { data, error } = await scopeSpace(
+      supabase
+        .from("document_chunks")
+        .select("id,document_id,document_name,content,chunk_index,page_num")
+        .eq("user_id", userId),
+      spaceId,
+    )
       .in("document_id", docIds)
       .order("chunk_index", { ascending: true })
       .limit(350);
@@ -283,11 +287,13 @@ async function expandDocumentContext(
           return `and(document_id.eq.${doc},chunk_index.eq.${idx})`;
         })
         .join(",");
-      const { data, error } = await supabase
-        .from("document_chunks")
-        .select("id,document_id,document_name,content,chunk_index,page_num")
-        .eq("user_id", userId)
-        .or(orFilter);
+      const { data, error } = await scopeSpace(
+        supabase
+          .from("document_chunks")
+          .select("id,document_id,document_name,content,chunk_index,page_num")
+          .eq("user_id", userId),
+        spaceId,
+      ).or(orFilter);
       if (!error) {
         for (const n of (data || []) as any[]) {
           if (!seen.has(n.id)) seen.set(n.id, { ...n, similarity: 0, keywordScore: 0, hybridScore: 0 });
