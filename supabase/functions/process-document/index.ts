@@ -274,7 +274,22 @@ serve(async (req) => {
     }
     const userId = userData.user.id;
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { documentName, documentText, mimeType, fileSize, pageImages, pdfBase64, pageCount } = await req.json();
+    const { documentName, documentText, mimeType, fileSize, pageImages, pdfBase64, pageCount, spaceId } = await req.json();
+    const targetSpaceId = typeof spaceId === "string" && spaceId ? spaceId : null;
+
+    // Permission-based document access: only editors/admins of a knowledge space may ingest into it.
+    if (targetSpaceId) {
+      const { data: canWrite, error: permErr } = await supabase.rpc("can_write_space", {
+        _space_id: targetSpaceId,
+        _user_id: userId,
+      });
+      if (permErr || canWrite !== true) {
+        return new Response(JSON.stringify({ error: "You do not have permission to add documents to this knowledge space" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     if (!documentName || typeof documentName !== "string") {
       return new Response(JSON.stringify({ error: "documentName required" }), {
@@ -323,6 +338,7 @@ serve(async (req) => {
         status: "processing",
         chunk_count: 0,
         user_id: userId,
+        space_id: targetSpaceId,
       })
       .select("id")
       .single();
@@ -376,6 +392,7 @@ serve(async (req) => {
           start_char: pos.realStart,
           end_char: pos.realStart + slice[j].length,
           user_id: userId,
+          space_id: targetSpaceId,
         });
         if (pendingRows.length >= BATCH_INSERT) await flush();
       }
