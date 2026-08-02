@@ -148,7 +148,12 @@ function buildVariants(question: string): string[] {
   return Array.from(new Set([question, norm, keywords(question).join(" "), expanded].filter((s) => s && s.length > 1)));
 }
 
-async function keywordFallbackSearch(supabase: any, question: string, userId: string): Promise<RetrievedChunk[]> {
+// Restrict a document_chunks query to one knowledge space when the user has a space selected.
+function scopeSpace(query: any, spaceId: string | null) {
+  return spaceId ? query.eq("space_id", spaceId) : query;
+}
+
+async function keywordFallbackSearch(supabase: any, question: string, userId: string, spaceId: string | null = null): Promise<RetrievedChunk[]> {
   const terms = expandedKeywords(question)
     .filter((term) => (/\d/.test(term) || term.length >= 3) && !/^(isme|kis|kya|hai)$/.test(term))
     .slice(0, 14);
@@ -160,10 +165,13 @@ async function keywordFallbackSearch(supabase: any, question: string, userId: st
     .join(",");
   if (!orFilter) return [];
 
-  const { data, error } = await supabase
-    .from("document_chunks")
-    .select("id,document_id,document_name,content,chunk_index,page_num")
-    .eq("user_id", userId)
+  const { data, error } = await scopeSpace(
+    supabase
+      .from("document_chunks")
+      .select("id,document_id,document_name,content,chunk_index,page_num")
+      .eq("user_id", userId),
+    spaceId,
+  )
     .or(orFilter)
     .limit(60);
   if (error) {
