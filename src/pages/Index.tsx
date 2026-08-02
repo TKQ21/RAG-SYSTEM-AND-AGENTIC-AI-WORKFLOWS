@@ -7,6 +7,7 @@ import { ChatHistorySidebar } from "@/components/ChatHistorySidebar";
 import { useAgentChat } from "@/hooks/useAgentChat";
 import { IntroAnimation } from "@/components/IntroAnimation";
 import { useAuth } from "@/hooks/useAuth";
+import { useSpaces } from "@/hooks/useSpaces";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -38,11 +39,12 @@ const Index = () => {
 };
 
 function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
+  const { spaces, activeSpaceId, setActiveSpaceId } = useSpaces(userId);
   const {
     messages, isProcessing, currentSteps, mode, setMode,
     documents, sendMessage, uploadDocument, removeDocument,
     totalChunks, totalQueries, sessionId, loadSession, newChat,
-  } = useAgentChat(userId);
+  } = useAgentChat(userId, activeSpaceId);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -109,6 +111,9 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
           onOpenHistory={() => setHistoryOpen(true)}
           onNewChat={newChat}
           onCloseMobile={() => setMobileSidebarOpen(false)}
+          spaces={spaces}
+          activeSpaceId={activeSpaceId}
+          onSelectSpace={setActiveSpaceId}
         />
       </div>
 
