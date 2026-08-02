@@ -23,7 +23,7 @@ async function getAuthHeader(): Promise<string> {
   return `Bearer ${token}`;
 }
 
-export function useAgentChat(userId: string | null) {
+export function useAgentChat(userId: string | null, spaceId: string | null = null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
@@ -63,10 +63,12 @@ export function useAgentChat(userId: string | null) {
       }
     })();
     (async () => {
-      const { data } = await supabase
+      let query = supabase
         .from("documents")
-        .select("id, name, mime_type, size, chunk_count, created_at")
-        .order("created_at", { ascending: false });
+        .select("id, name, mime_type, size, chunk_count, created_at, space_id");
+      // Multi-domain: when a knowledge space is selected, only its documents are visible.
+      query = spaceId ? query.eq("space_id", spaceId) : query.is("space_id", null);
+      const { data } = await query.order("created_at", { ascending: false });
       if (data) {
         setDocuments(data.map((d: any) => ({
           id: d.id,
@@ -86,7 +88,7 @@ export function useAgentChat(userId: string | null) {
         setActiveDocumentId(null);
       }
     })();
-  }, [sessionId, userId]);
+  }, [sessionId, userId, spaceId]);
 
   const addStep = useCallback((step: Omit<AgentStep, "id" | "timestamp">) => {
     const fullStep: AgentStep = { ...step, id: generateId(), timestamp: Date.now() };
@@ -126,7 +128,7 @@ export function useAgentChat(userId: string | null) {
       const resp = await fetch(CHAT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: await getAuthHeader() },
-        body: JSON.stringify({ messages: apiMessages, mode, sessionId, activeDocumentId }),
+        body: JSON.stringify({ messages: apiMessages, mode, sessionId, activeDocumentId, spaceId }),
       });
 
       if (!resp.ok) {
@@ -196,7 +198,7 @@ export function useAgentChat(userId: string | null) {
       setIsProcessing(false);
       setCurrentSteps([]);
     }
-  }, [isProcessing, messages, mode, addStep, updateStep, sessionId, activeDocumentId]);
+  }, [isProcessing, messages, mode, addStep, updateStep, sessionId, activeDocumentId, spaceId]);
 
   const uploadDocument = useCallback(async (file: File) => {
     const docId = generateId();
@@ -213,6 +215,7 @@ export function useAgentChat(userId: string | null) {
         mimeType: file.type,
         fileSize: file.size,
         pageCount,
+        spaceId,
       };
 
       // Send raw PDF only for text-poor/scanned PDFs; this lets backend Gemini Vision OCR all pages
@@ -246,7 +249,7 @@ export function useAgentChat(userId: string | null) {
       toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
     }
-  }, []);
+  }, [spaceId]);
 
   const removeDocument = useCallback(async (id: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
@@ -254,12 +257,14 @@ export function useAgentChat(userId: string | null) {
     // Cascade-style delete via RLS: remove chunks then document
     await supabase.from("document_chunks").delete().eq("document_id", id);
     await supabase.from("documents").delete().eq("id", id);
-    const { data } = await supabase.from("documents").select("chunk_count");
+    let remainQuery = supabase.from("documents").select("chunk_count");
+    remainQuery = spaceId ? remainQuery.eq("space_id", spaceId) : remainQuery.is("space_id", null);
+    const { data } = await remainQuery;
     const remaining = (data || []).reduce((s: number, d: any) => s + (d.chunk_count || 0), 0);
     setTotalChunks(remaining);
     // Reset the queries counter when there are no documents left
     if (!data || data.length === 0) setTotalQueries(0);
-  }, []);
+  }, [spaceId]);
 
   const loadSession = useCallback(async (sid: string) => {
     const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
