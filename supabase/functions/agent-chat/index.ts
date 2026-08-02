@@ -1119,10 +1119,13 @@ serve(async (req) => {
         } else if (preferred.length === 0) {
           // No hits at all from active doc in vector/keyword search — try a direct
           // scan of that doc's chunks so the user's active document is always tried first.
-          const { data: docChunks } = await supabase
-            .from("document_chunks")
-            .select("id,document_id,document_name,content,chunk_index,page_num")
-            .eq("user_id", userId)
+          const { data: docChunks } = await scopeSpace(
+            supabase
+              .from("document_chunks")
+              .select("id,document_id,document_name,content,chunk_index,page_num")
+              .eq("user_id", userId),
+            activeSpaceId,
+          )
             .eq("document_id", preferredDocId)
             .order("chunk_index", { ascending: true })
             .limit(120);
