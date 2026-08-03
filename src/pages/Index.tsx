@@ -44,6 +44,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
     messages, isProcessing, currentSteps, mode, setMode,
     documents, sendMessage, uploadDocument, removeDocument,
     totalChunks, totalQueries, sessionId, loadSession, newChat,
+    suggestions,
   } = useAgentChat(userId, activeSpaceId);
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -132,6 +133,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
           currentSteps={currentSteps}
           isProcessing={isProcessing}
           mode={mode}
+          suggestions={suggestions}
           onSend={sendMessage}
         />
       </div>
