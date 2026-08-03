@@ -8,6 +8,7 @@ const generateId = () => Math.random().toString(36).slice(2, 10);
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-chat`;
 const PROCESS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-document`;
+const FOLLOWUPS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/suggest-followups`;
 
 function getSessionId(userId: string | null): string {
   const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
@@ -33,6 +34,7 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
   const [totalQueries, setTotalQueries] = useState(0);
   const [sessionId, setSessionId] = useState(() => getSessionId(userId));
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => { setSessionId(getSessionId(userId)); }, [userId]);
 
@@ -108,6 +110,8 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
     setIsProcessing(true);
     setCurrentSteps([]);
     setTotalQueries((q) => q + 1);
+    setSuggestions([]);
+    const startedAt = Date.now();
 
     const thinkId = addStep({ type: "thinking", label: "Analyzing query intent", status: "running" });
 
@@ -190,15 +194,63 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
 
       updateStep(resultId, { status: "done" });
       setMessages((prev) => prev.map((m) => m.id === "streaming" ? { ...m, id: generateId() } : m));
+
+      // Analytics log for the admin dashboard (best-effort, never blocks the answer).
+      if (userId) {
+        supabase
+          .from("search_logs")
+          .insert({
+            user_id: userId,
+            space_id: spaceId,
+            session_id: sessionId,
+            mode,
+            query: content.trim().slice(0, 2000),
+            results_count: assistantContent ? 1 : 0,
+            latency_ms: Date.now() - startedAt,
+            success: true,
+          })
+          .then(({ error }) => { if (error) console.error("search log failed", error.message); });
+      }
+
+      // Suggested follow-up questions, grounded in the answer that was just produced.
+      if (assistantContent.trim().length > 40) {
+        (async () => {
+          try {
+            const r = await fetch(FOLLOWUPS_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: await getAuthHeader() },
+              body: JSON.stringify({ question: content.trim(), answer: assistantContent, mode }),
+            });
+            if (!r.ok) return;
+            const json = await r.json();
+            if (Array.isArray(json.suggestions)) setSuggestions(json.suggestions.slice(0, 3));
+          } catch { /* suggestions are optional */ }
+        })();
+      }
     } catch (e) {
       console.error("Chat error:", e);
       const errorMsg: ChatMessage = { id: generateId(), role: "assistant", content: `⚠️ Error: ${e instanceof Error ? e.message : "Something went wrong"}. Please try again.`, timestamp: Date.now() };
       setMessages((prev) => [...prev, errorMsg]);
+      if (userId) {
+        supabase
+          .from("search_logs")
+          .insert({
+            user_id: userId,
+            space_id: spaceId,
+            session_id: sessionId,
+            mode,
+            query: content.trim().slice(0, 2000),
+            results_count: 0,
+            latency_ms: Date.now() - startedAt,
+            success: false,
+          })
+          .then(({ error }) => { if (error) console.error("search log failed", error.message); });
+      }
     } finally {
       setIsProcessing(false);
       setCurrentSteps([]);
     }
-  }, [isProcessing, messages, mode, addStep, updateStep, sessionId, activeDocumentId, spaceId]);
+  }, [isProcessing, messages, mode, addStep, updateStep, sessionId, activeDocumentId, spaceId, userId]);
 
   const uploadDocument = useCallback(async (file: File) => {
     const docId = generateId();
@@ -270,6 +322,7 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
     const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
     localStorage.setItem(key, sid);
     setSessionId(sid);
+    setSuggestions([]);
     const { data } = await supabase
       .from("chat_history")
       .select("*")
@@ -295,6 +348,7 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
     setSessionId(fresh);
     setMessages([]);
     setCurrentSteps([]);
+    setSuggestions([]);
     if (userId) {
       supabase
         .from("chat_sessions")
@@ -303,5 +357,5 @@ export function useAgentChat(userId: string | null, spaceId: string | null = nul
     }
   }, [userId]);
 
-  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat, activeDocumentId, setActiveDocumentId };
+  return { messages, isProcessing, currentSteps, mode, setMode, documents, sendMessage, uploadDocument, removeDocument, totalChunks, totalQueries, sessionId, loadSession, newChat, activeDocumentId, setActiveDocumentId, suggestions };
 }
