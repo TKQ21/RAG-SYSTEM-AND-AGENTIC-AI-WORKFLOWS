@@ -95,6 +95,13 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           <Network className="h-3.5 w-3.5" />
           Knowledge Sources
         </Link>
+        <Link
+          to="/admin"
+          className="mt-2 flex items-center gap-2 rounded-lg border border-neon-purple/30 bg-neon-purple/5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-neon-purple transition-all hover:bg-neon-purple/10"
+        >
+          <Gauge className="h-3.5 w-3.5" />
+          Admin Dashboard
+        </Link>
       </div>
 
       <div className="flex-1 overflow-y-auto">
