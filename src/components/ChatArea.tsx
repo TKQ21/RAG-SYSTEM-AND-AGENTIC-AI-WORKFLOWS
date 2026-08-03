@@ -4,6 +4,7 @@ import { Bot, Sparkles } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { AgentSteps } from "./AgentSteps";
+import { SuggestedQuestions } from "./SuggestedQuestions";
 import type { ChatMessage as ChatMessageType, AgentStep, AgentMode } from "@/types/agent";
 
 const MODE_LABELS: Record<AgentMode, string> = {
@@ -56,10 +57,11 @@ interface ChatAreaProps {
   currentSteps: AgentStep[];
   isProcessing: boolean;
   mode: AgentMode;
+  suggestions?: string[];
   onSend: (message: string) => void;
 }
 
-export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }: ChatAreaProps) {
+export function ChatArea({ messages, currentSteps, isProcessing, mode, suggestions = [], onSend }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -157,6 +159,9 @@ export function ChatArea({ messages, currentSteps, isProcessing, mode, onSend }:
             {messages.map((msg) => (
               <ChatMessage key={msg.id} message={msg} />
             ))}
+            {!isProcessing && suggestions.length > 0 && (
+              <SuggestedQuestions suggestions={suggestions} onSelect={onSend} disabled={isProcessing} />
+            )}
             {isProcessing && currentSteps.length > 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neon-cyan/30 bg-secondary glow-cyan">
