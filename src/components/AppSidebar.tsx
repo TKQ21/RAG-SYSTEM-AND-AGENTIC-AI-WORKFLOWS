@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus, Network } from "lucide-react";
+import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus, Network, Gauge } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import { SpaceSelector } from "./SpaceSelector";
