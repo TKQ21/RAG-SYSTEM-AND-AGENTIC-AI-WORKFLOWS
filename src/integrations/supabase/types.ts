@@ -227,6 +227,53 @@ export type Database = {
         }
         Relationships: []
       }
+      search_logs: {
+        Row: {
+          created_at: string
+          id: string
+          latency_ms: number
+          mode: string
+          query: string
+          results_count: number
+          session_id: string | null
+          space_id: string | null
+          success: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          latency_ms?: number
+          mode?: string
+          query: string
+          results_count?: number
+          session_id?: string | null
+          space_id?: string | null
+          success?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          latency_ms?: number
+          mode?: string
+          query?: string
+          results_count?: number
+          session_id?: string | null
+          space_id?: string | null
+          success?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "search_logs_space_id_fkey"
+            columns: ["space_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_spaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       space_members: {
         Row: {
           access_level: string
