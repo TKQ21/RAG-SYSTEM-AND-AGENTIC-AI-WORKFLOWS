@@ -377,6 +377,26 @@ async function extractPlainOrMarkdown(file: File): Promise<string> {
   return normalizeExtractedText(isMarkdown(file) ? raw.replace(/\r\n?/g, "\n") : raw);
 }
 
+function isImageFile(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return file.type.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].includes(ext);
+}
+
+/** Scanned photos / screenshots are rasterized to JPEG base64 so backend Vision OCR can read them. */
+async function imageToJpegBase64(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  canvas.remove();
+  bitmap.close?.();
+  return dataUrl.replace(/^data:image\/jpeg;base64,/, "");
+}
+
 export async function extractDocumentText(file: File): Promise<string> {
   const extension = getFileExtension(file.name);
 
@@ -414,6 +434,11 @@ export async function extractDocumentWithImages(file: File): Promise<{
   pageCount?: number;
 }> {
   const extension = getFileExtension(file.name);
+
+  if (isImageFile(file)) {
+    const image = await imageToJpegBase64(file);
+    return { text: "", pageImages: [image], isImageHeavy: true, pageCount: 1 };
+  }
 
   if (file.type === "application/pdf" || extension === "pdf") {
     const result = await extractPdfWithImages(file);
