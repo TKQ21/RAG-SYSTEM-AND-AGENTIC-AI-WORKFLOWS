@@ -10,6 +10,7 @@ import { useSpaces } from "@/hooks/useSpaces";
 import { useAgentChat } from "@/hooks/useAgentChat";
 import { supabase } from "@/integrations/supabase/client";
 import { domainLabel } from "@/lib/spaces";
+import { AdminPasswordGate } from "@/components/AdminPasswordGate";
 
 const REINDEX_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reindex-document`;
 
@@ -147,6 +148,7 @@ export default function Admin() {
   if (!user) return <Navigate to="/auth" replace />;
 
   return (
+    <AdminPasswordGate>
     <div className="min-h-screen bg-background px-4 py-6 md:px-8">
       <div className="mx-auto max-w-5xl space-y-5">
         {/* Header */}
@@ -231,7 +233,7 @@ export default function Admin() {
             type="file"
             multiple
             className="hidden"
-            accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.xls"
+            accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp,.tif,.tiff"
             onChange={(e) => handleUpload(e.target.files)}
           />
           <button
@@ -352,6 +354,7 @@ export default function Admin() {
         </div>
       </div>
     </div>
+    </AdminPasswordGate>
   );
 }
 

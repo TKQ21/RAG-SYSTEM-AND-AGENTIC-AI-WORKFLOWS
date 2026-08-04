@@ -191,13 +191,50 @@ function worksheetToRows(ws: XLSX.WorkSheet): unknown[][] {
     });
 }
 
+function profileColumns(headerRow: string[], dataRows: string[][]): string[] {
+  const lines: string[] = ["## Column profile"];
+  for (let c = 0; c < headerRow.length; c += 1) {
+    const name = headerRow[c] || `Column ${c + 1}`;
+    const counts = new Map<string, number>();
+    let nonEmpty = 0;
+    let numericCount = 0;
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const row of dataRows) {
+      const v = (row[c] ?? "").trim();
+      if (!v) continue;
+      nonEmpty += 1;
+      if (counts.size <= 5000) counts.set(v, (counts.get(v) || 0) + 1);
+      const n = Number(v.replace(/,/g, ""));
+      if (Number.isFinite(n)) {
+        numericCount += 1;
+        sum += n;
+        if (n < min) min = n;
+        if (n > max) max = n;
+      }
+    }
+    const parts = [`- ${name}: non-empty ${nonEmpty}, distinct ${counts.size}`];
+    if (numericCount > nonEmpty * 0.7 && numericCount > 0) {
+      parts.push(`numeric (min ${min}, max ${max}, avg ${(sum / numericCount).toFixed(2)}, sum ${sum})`);
+    }
+    lines.push(parts.join(" | "));
+    if (counts.size > 0 && counts.size <= 300) {
+      const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60);
+      for (const [value, count] of top) {
+        const pct = nonEmpty ? ((count / nonEmpty) * 100).toFixed(2) : "0";
+        lines.push(`  Value count -> ${name} = "${value}": ${count} rows (${pct}% of ${nonEmpty})`);
+      }
+    }
+  }
+  return lines;
+}
+
 function sheetRowsToText(rows: unknown[][], sheetName: string): string {
   if (!rows || rows.length === 0) return "";
-  // Normalize each cell to string
   const norm = rows.map((r) =>
     (r || []).map((c) => (c === null || c === undefined ? "" : String(c).replace(/\s+/g, " ").trim()))
   );
-  // Trim trailing empty rows
   while (norm.length && norm[norm.length - 1].every((c) => !c)) norm.pop();
   if (!norm.length) return "";
   let maxCols = 0;
@@ -205,36 +242,49 @@ function sheetRowsToText(rows: unknown[][], sheetName: string): string {
   for (const r of norm) while (r.length < maxCols) r.push("");
 
   const header = norm[0];
-  const body = norm.slice(1);
   const hasHeader = header.some((c) => c && isNaN(Number(c)));
+  const headerRow = hasHeader ? header : header.map((_, i) => `Column ${i + 1}`);
+  const dataRows = hasHeader ? norm.slice(1) : norm;
 
   const lines: string[] = [];
   lines.push(`# Sheet: ${sheetName}`);
-  lines.push(`Total rows: ${body.length} | Total columns: ${maxCols}`);
+  lines.push(`Total rows: ${dataRows.length} | Total columns: ${maxCols}`);
+  lines.push(`Columns: ${headerRow.map((c, i) => c || `Column ${i + 1}`).join(" | ")}`);
   lines.push("");
 
-  // Markdown table for smaller sheets. Large sheets stay row-structured so uploads do not crash or truncate.
-  const headerRow = hasHeader ? header : header.map((_, i) => `Column ${i + 1}`);
-  const dataRows = hasHeader ? body : norm;
-  if (dataRows.length <= 200) {
+  // Analytics-first summary so huge sheets can still answer counting/filtering questions
+  // without shipping millions of rows to the backend.
+  lines.push(...profileColumns(headerRow, dataRows));
+  lines.push("");
+
+  if (dataRows.length <= 150) {
     lines.push(`| ${headerRow.map((c) => c || " ").join(" | ")} |`);
     lines.push(`| ${headerRow.map(() => "---").join(" | ")} |`);
     for (const r of dataRows) {
       lines.push(`| ${r.map((c) => (c || " ").replace(/\|/g, "\\|")).join(" | ")} |`);
     }
     lines.push("");
-  } else {
-    lines.push(`Columns: ${headerRow.map((c, i) => c || `Column ${i + 1}`).join(" | ")}`);
-    lines.push("Large sheet: rows are stored below in structured format for exact counting/filtering.");
-    lines.push("");
   }
 
-  // Also add plain row-by-row block so chunker can index per row
+  // Row-level detail, sampled for very large sheets (head + tail) to stay inside upload limits.
+  const HEAD = 2000;
+  const TAIL = 400;
+  const sampled = dataRows.length > HEAD + TAIL;
   lines.push("## Rows (structured)");
-  dataRows.forEach((r, idx) => {
+  if (sampled) {
+    lines.push(`Large sheet: showing first ${HEAD} and last ${TAIL} of ${dataRows.length} rows. Use the column profile value counts above for totals and filtered counts.`);
+  }
+  const emit = (r: string[], idx: number) => {
     const parts = r.map((c, i) => `${headerRow[i] || `Column ${i + 1}`}: ${c}`);
     lines.push(`Row ${idx + 1}: ${parts.join(" | ")}`);
-  });
+  };
+  if (sampled) {
+    for (let i = 0; i < HEAD; i += 1) emit(dataRows[i], i);
+    lines.push(`... ${dataRows.length - HEAD - TAIL} rows omitted ...`);
+    for (let i = dataRows.length - TAIL; i < dataRows.length; i += 1) emit(dataRows[i], i);
+  } else {
+    dataRows.forEach((r, idx) => emit(r, idx));
+  }
 
   return lines.join("\n");
 }
@@ -327,6 +377,26 @@ async function extractPlainOrMarkdown(file: File): Promise<string> {
   return normalizeExtractedText(isMarkdown(file) ? raw.replace(/\r\n?/g, "\n") : raw);
 }
 
+function isImageFile(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return file.type.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].includes(ext);
+}
+
+/** Scanned photos / screenshots are rasterized to JPEG base64 so backend Vision OCR can read them. */
+async function imageToJpegBase64(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  canvas.remove();
+  bitmap.close?.();
+  return dataUrl.replace(/^data:image\/jpeg;base64,/, "");
+}
+
 export async function extractDocumentText(file: File): Promise<string> {
   const extension = getFileExtension(file.name);
 
@@ -364,6 +434,11 @@ export async function extractDocumentWithImages(file: File): Promise<{
   pageCount?: number;
 }> {
   const extension = getFileExtension(file.name);
+
+  if (isImageFile(file)) {
+    const image = await imageToJpegBase64(file);
+    return { text: "", pageImages: [image], isImageHeavy: true, pageCount: 1 };
+  }
 
   if (file.type === "application/pdf" || extension === "pdf") {
     const result = await extractPdfWithImages(file);

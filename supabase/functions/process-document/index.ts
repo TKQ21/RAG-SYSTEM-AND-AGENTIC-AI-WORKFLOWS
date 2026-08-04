@@ -216,6 +216,15 @@ function chunkSpreadsheetRowsImpl(clean: string): string[] {
   let rows: string[] = [];
   let rowChars = 0;
 
+  let profile: string[] = [];
+
+  const flushProfile = () => {
+    if (profile.length <= 1) { profile = []; return; }
+    const piece = [...meta.slice(-4), ...profile].join("\n").trim();
+    if (piece.length > 10) chunks.push(piece);
+    profile = ["## Column profile"];
+  };
+
   const flush = () => {
     if (!rows.length) return;
     const piece = [...meta.slice(-6), ...rows].join("\n").trim();
@@ -239,6 +248,16 @@ function chunkSpreadsheetRowsImpl(clean: string): string[] {
       continue;
     }
 
+    // Column profile / value-count lines carry exact aggregates for huge sheets — keep them as
+    // their own retrievable chunks instead of dropping them.
+    if (/^## Column profile$/i.test(line)) { flush(); profile = [line]; continue; }
+    if (profile.length && (line.startsWith("- ") || /^Value count ->/i.test(line))) {
+      profile.push(line);
+      if (profile.join("\n").length > 1200) flushProfile();
+      continue;
+    }
+    if (profile.length) flushProfile();
+
     if (/^Row\s+\d+\s*:/i.test(line)) {
       if (rows.length > 0 && rowChars + line.length > 1400) flush();
       rows.push(line);
@@ -248,6 +267,7 @@ function chunkSpreadsheetRowsImpl(clean: string): string[] {
 
     if (!line.startsWith("|") && meta.length < 6) meta.push(line);
   }
+  flushProfile();
   flush();
 
   return chunks;

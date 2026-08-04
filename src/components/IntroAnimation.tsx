@@ -72,7 +72,7 @@ export function IntroAnimation({ onComplete }: IntroAnimationProps) {
                     filter: "drop-shadow(0 0 25px hsl(210 100% 55% / 0.6))",
                   }}
                 >
-                  RAG System
+                  RAG SYSTEM
                 </motion.h1>
                 <motion.p
                   initial={{ opacity: 0, y: 20 }}
@@ -81,7 +81,7 @@ export function IntroAnimation({ onComplete }: IntroAnimationProps) {
                   className="mt-4 text-lg md:text-2xl font-light tracking-[0.3em] uppercase text-cyan-200/80"
                   style={{ textShadow: "0 0 20px hsl(185 100% 50% / 0.5)" }}
                 >
-                  &amp; Agentic AI Workflow
+                  &amp; AGENTIC AI WORKFLOW
                 </motion.p>
                 <motion.div
                   initial={{ scaleX: 0 }}
