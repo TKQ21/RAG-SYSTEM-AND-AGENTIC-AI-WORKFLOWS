@@ -231,7 +231,7 @@ export default function Admin() {
             type="file"
             multiple
             className="hidden"
-            accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.xls"
+            accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp,.tif,.tiff"
             onChange={(e) => handleUpload(e.target.files)}
           />
           <button

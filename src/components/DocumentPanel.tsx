@@ -66,7 +66,7 @@ export function DocumentPanel({ documents, onUpload, onRemove }: DocumentPanelPr
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.pptx"
+          accept=".pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.pptx,.png,.jpg,.jpeg,.webp,.tif,.tiff"
           multiple
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
