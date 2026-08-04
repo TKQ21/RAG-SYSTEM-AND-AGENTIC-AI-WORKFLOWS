@@ -623,6 +623,35 @@ function markdownCell(text: string): string {
   return String(text || "-").replace(/\|/g, "\\|");
 }
 
+// Exact aggregates for very large spreadsheets come from the precomputed "Value count" profile
+// lines produced at ingestion time (row-level detail is sampled for huge sheets).
+function profileCountAnswer(question: string, chunks: RetrievedChunk[]): string | null {
+  const q = question.toLowerCase();
+  if (!/\b(rows?|kitni|kitne|count|total|how many)\b/i.test(q)) return null;
+  const re = /Value count -> (.+?) = "(.*?)": (\d+) rows/g;
+  const hits: { column: string; value: string; count: number; source: RetrievedChunk }[] = [];
+  for (const chunk of chunks) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(chunk.content)) !== null) {
+      hits.push({ column: m[1].trim(), value: m[2].trim(), count: Number(m[3]), source: chunk });
+    }
+  }
+  if (!hits.length) return null;
+  const scored = hits
+    .map((h) => {
+      const colTokens = h.column.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
+      const colHit = colTokens.some((t) => q.includes(t));
+      const valHit = h.value.length > 0 && new RegExp(`(^|[^a-z0-9])${h.value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(q);
+      return { h, score: (colHit ? 1 : 0) + (valHit ? 2 : 0) };
+    })
+    .filter((x) => x.score >= 3)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  const best = scored[0].h;
+  return `Rows where **${best.column} = ${best.value}**: **${best.count}**\n\n| Column | Value | Row count |\n|---|---|---:|\n| ${best.column} | ${best.value} | ${best.count} |\n\n📌 Source: ${best.source.document_name} | Chunk #${best.source.chunk_index}`;
+}
+
 function spreadsheetAnswerFromRows(question: string, chunks: RetrievedChunk[]): string | null {
   const q = question.toLowerCase();
   const asksSheet = /\b(rows?|columns?|cols?|kitni|kitne|count|total|how many|csv|excel|xlsx|xls|sheet)\b/i.test(q);
@@ -678,7 +707,10 @@ async function spreadsheetAggregateAnswer(question: string, chunks: RetrievedChu
     return spreadsheetAnswerFromRows(question, chunks);
   }
   const allChunks = ((data || []) as any[]).map((row) => ({ ...row, similarity: 0, keywordScore: 0, hybridScore: 0 })) as RetrievedChunk[];
-  return spreadsheetAnswerFromRows(question, allChunks.length ? allChunks : chunks);
+  const pool = allChunks.length ? allChunks : chunks;
+  const exactProfile = profileCountAnswer(question, pool);
+  if (exactProfile) return exactProfile;
+  return spreadsheetAnswerFromRows(question, pool);
 }
 
 function ordSuffix(n: number): string {
