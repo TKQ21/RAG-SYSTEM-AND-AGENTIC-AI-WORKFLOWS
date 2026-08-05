@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import {
   ArrowLeft, Upload, RefreshCw, Trash2, Network, Layers, Loader2,
-  Activity, Clock, FileText, Database, Search, ShieldCheck,
+  Activity, Clock, FileText, Database, Search, ShieldCheck, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -36,6 +36,35 @@ interface LogRow {
   space_id: string | null;
 }
 
+interface UserOverviewRow {
+  user_id: string;
+  email: string | null;
+  doc_count: number;
+  chunk_count: number;
+  query_count: number;
+  last_active: string;
+}
+
+interface GlobalQueryRow {
+  id: string;
+  email: string | null;
+  query: string;
+  mode: string;
+  latency_ms: number;
+  success: boolean;
+  created_at: string;
+}
+
+interface GlobalDocRow {
+  id: string;
+  email: string | null;
+  name: string;
+  status: string;
+  chunk_count: number;
+  size: number;
+  created_at: string;
+}
+
 function formatBytes(bytes: number) {
   if (!bytes) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -50,6 +79,10 @@ export default function Admin() {
 
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
+  const [userRows, setUserRows] = useState<UserOverviewRow[]>([]);
+  const [globalQueries, setGlobalQueries] = useState<GlobalQueryRow[]>([]);
+  const [globalDocs, setGlobalDocs] = useState<GlobalDocRow[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -75,6 +108,23 @@ export default function Admin() {
     if (logErr) toast.error(logErr.message);
     setDocs((docData as DocRow[]) || []);
     setLogs((logData as LogRow[]) || []);
+
+    // Global (all users) view — only succeeds for accounts with the admin role
+    const api = supabase as any;
+    const [ov, gq, gd] = await Promise.all([
+      api.rpc("admin_user_overview"),
+      api.rpc("admin_recent_queries", { _limit: 100 }),
+      api.rpc("admin_recent_documents", { _limit: 100 }),
+    ]);
+    if (!ov.error) {
+      setIsAdmin(true);
+      setUserRows((ov.data as UserOverviewRow[]) || []);
+      setGlobalQueries((gq.data as GlobalQueryRow[]) || []);
+      setGlobalDocs((gd.data as GlobalDocRow[]) || []);
+    } else {
+      setIsAdmin(false);
+      setUserRows([]); setGlobalQueries([]); setGlobalDocs([]);
+    }
     setRefreshing(false);
   }, [user?.id, activeSpaceId]);
 
@@ -149,7 +199,7 @@ export default function Admin() {
 
   return (
     <AdminPasswordGate>
-    <div className="min-h-screen bg-background px-4 py-6 md:px-8">
+    <div className="min-h-full bg-background px-4 py-6 md:px-8">
       <div className="mx-auto max-w-5xl space-y-5">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -217,8 +267,97 @@ export default function Admin() {
           <StatCard icon={FileText} label="Documents" value={String(docs.length)} accent="text-neon-pink" border="border-neon-pink/25" />
           <StatCard icon={Database} label="Chunks" value={String(stats.totalChunks)} accent="text-neon-cyan" border="border-neon-cyan/25" />
           <StatCard icon={Clock} label="Avg latency" value={`${stats.avgLatency} ms`} accent="text-neon-green" border="border-neon-green/25" />
-          <StatCard icon={Activity} label="Queries logged" value={String(logs.length)} accent="text-neon-purple" border="border-neon-purple/25" />
+          <StatCard
+            icon={isAdmin ? Users : Activity}
+            label={isAdmin ? "Total users" : "Queries logged"}
+            value={isAdmin ? String(userRows.length) : String(logs.length)}
+            accent="text-neon-purple"
+            border="border-neon-purple/25"
+          />
         </div>
+
+        {/* All users (admin role only) */}
+        {isAdmin && (
+          <div className="rounded-xl border border-neon-purple/25 bg-card/50 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-neon-purple">
+              <Users className="h-3.5 w-3.5" /> Users ({userRows.length})
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="border-b border-border/60 px-2 py-2 text-left">User</th>
+                    <th className="border-b border-border/60 px-2 py-2 text-right">Docs</th>
+                    <th className="border-b border-border/60 px-2 py-2 text-right">Chunks</th>
+                    <th className="border-b border-border/60 px-2 py-2 text-right">Queries</th>
+                    <th className="border-b border-border/60 px-2 py-2 text-right">Last active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userRows.map((u) => (
+                    <tr key={u.user_id} className="text-foreground/85">
+                      <td className="max-w-[220px] truncate border-b border-border/30 px-2 py-2 font-medium">{u.email || u.user_id}</td>
+                      <td className="border-b border-border/30 px-2 py-2 text-right font-mono">{u.doc_count}</td>
+                      <td className="border-b border-border/30 px-2 py-2 text-right font-mono">{u.chunk_count}</td>
+                      <td className="border-b border-border/30 px-2 py-2 text-right font-mono">{u.query_count}</td>
+                      <td className="border-b border-border/30 px-2 py-2 text-right font-mono text-[10px] text-muted-foreground">
+                        {new Date(u.last_active).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* All uploads across users */}
+        {isAdmin && (
+          <div className="rounded-xl border border-neon-pink/20 bg-card/50 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-neon-pink">
+              <FileText className="h-3.5 w-3.5" /> All uploads (every user)
+            </div>
+            {globalDocs.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">No documents uploaded by any user yet.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {globalDocs.map((d) => (
+                  <li key={d.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/40 bg-background/40 px-2.5 py-1.5 text-[11px]">
+                    <span className="font-mono text-[10px] text-neon-cyan">{d.email || "unknown"}</span>
+                    <span className="min-w-0 flex-1 truncate text-foreground/85">{d.name}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{d.chunk_count} chunks · {formatBytes(d.size)}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{new Date(d.created_at).toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* All questions across users */}
+        {isAdmin && (
+          <div className="rounded-xl border border-neon-cyan/20 bg-card/50 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-neon-cyan">
+              <Search className="h-3.5 w-3.5" /> All questions (every user)
+            </div>
+            {globalQueries.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">No questions asked yet.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {globalQueries.map((q) => (
+                  <li key={q.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/40 bg-background/40 px-2.5 py-1.5 text-[11px]">
+                    <span className={`font-mono text-[10px] ${q.success ? "text-neon-green" : "text-neon-red"}`}>{q.success ? "OK" : "ERR"}</span>
+                    <span className="font-mono text-[10px] text-neon-cyan">{q.email || "unknown"}</span>
+                    <span className="rounded border border-neon-purple/30 bg-neon-purple/10 px-1.5 py-0.5 font-mono text-[10px] text-neon-purple">{q.mode}</span>
+                    <span className="min-w-0 flex-1 truncate text-foreground/85">{q.query}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{q.latency_ms} ms</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{new Date(q.created_at).toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Upload */}
         <div className="rounded-xl border border-neon-pink/20 bg-card/50 p-4">

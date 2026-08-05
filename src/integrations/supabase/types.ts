@@ -332,6 +332,42 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_recent_documents: {
+        Args: { _limit?: number }
+        Returns: {
+          chunk_count: number
+          created_at: string
+          email: string
+          id: string
+          name: string
+          size: number
+          status: string
+        }[]
+      }
+      admin_recent_queries: {
+        Args: { _limit?: number }
+        Returns: {
+          created_at: string
+          email: string
+          id: string
+          latency_ms: number
+          mode: string
+          query: string
+          results_count: number
+          success: boolean
+        }[]
+      }
+      admin_user_overview: {
+        Args: never
+        Returns: {
+          chunk_count: number
+          doc_count: number
+          email: string
+          last_active: string
+          query_count: number
+          user_id: string
+        }[]
+      }
       can_read_space: {
         Args: { _space_id: string; _user_id: string }
         Returns: boolean
