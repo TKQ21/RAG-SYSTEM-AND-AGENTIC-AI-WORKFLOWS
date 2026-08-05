@@ -83,6 +83,7 @@ export default function Admin() {
   const [globalQueries, setGlobalQueries] = useState<GlobalQueryRow[]>([]);
   const [globalDocs, setGlobalDocs] = useState<GlobalDocRow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [openEmail, setOpenEmail] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -113,8 +114,8 @@ export default function Admin() {
     const api = supabase as any;
     const [ov, gq, gd] = await Promise.all([
       api.rpc("admin_user_overview"),
-      api.rpc("admin_recent_queries", { _limit: 100 }),
-      api.rpc("admin_recent_documents", { _limit: 100 }),
+      api.rpc("admin_recent_queries", { _limit: 500 }),
+      api.rpc("admin_recent_documents", { _limit: 500 }),
     ]);
     if (!ov.error) {
       setIsAdmin(true);
@@ -129,6 +130,31 @@ export default function Admin() {
   }, [user?.id, activeSpaceId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Per-email activity: which user uploaded which document and what they asked
+  const perEmail = useMemo(() => {
+    const map = new Map<string, { email: string; docs: GlobalDocRow[]; queries: GlobalQueryRow[]; lastActive: number }>();
+    const ensure = (email: string | null) => {
+      const key = email || "unknown";
+      if (!map.has(key)) map.set(key, { email: key, docs: [], queries: [], lastActive: 0 });
+      return map.get(key)!;
+    };
+    userRows.forEach((u) => {
+      const e = ensure(u.email);
+      e.lastActive = Math.max(e.lastActive, new Date(u.last_active).getTime() || 0);
+    });
+    globalDocs.forEach((d) => {
+      const e = ensure(d.email);
+      e.docs.push(d);
+      e.lastActive = Math.max(e.lastActive, new Date(d.created_at).getTime() || 0);
+    });
+    globalQueries.forEach((q) => {
+      const e = ensure(q.email);
+      e.queries.push(q);
+      e.lastActive = Math.max(e.lastActive, new Date(q.created_at).getTime() || 0);
+    });
+    return Array.from(map.values()).sort((a, b) => b.lastActive - a.lastActive);
+  }, [userRows, globalDocs, globalQueries]);
 
   const stats = useMemo(() => {
     const totalChunks = docs.reduce((s, d) => s + (d.chunk_count || 0), 0);
