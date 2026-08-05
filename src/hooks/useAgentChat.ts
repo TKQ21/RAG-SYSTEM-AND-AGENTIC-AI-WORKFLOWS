@@ -12,9 +12,10 @@ const FOLLOWUPS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/suggest
 
 function getSessionId(userId: string | null): string {
   const key = userId ? `rag_session_id_${userId}` : "rag_session_id";
-  // Persist across browser sessions so chat history isn't lost until user deletes it
-  let sid = localStorage.getItem(key);
-  if (!sid) { sid = generateId() + generateId(); localStorage.setItem(key, sid); }
+  // Always start on a fresh "New Chat" when the app loads / user logs in.
+  // Old chats stay in the database and open only when the user clicks them.
+  const sid = generateId() + generateId();
+  localStorage.setItem(key, sid);
   return sid;
 }
 
