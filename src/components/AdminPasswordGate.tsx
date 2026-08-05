@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
-import { Lock, KeyRound, ShieldCheck } from "lucide-react";
+import { Lock, KeyRound, ShieldCheck, LogOut } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 const PASS_KEY = "nexus_admin_password";
 const UNLOCK_KEY = "nexus_admin_unlocked";
@@ -20,6 +21,7 @@ interface Props {
 
 /** Client-side access gate for the admin dashboard with an in-panel password change option. */
 export function AdminPasswordGate({ children }: Props) {
+  const navigate = useNavigate();
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(UNLOCK_KEY) === "1");
   const [value, setValue] = useState("");
   const [changing, setChanging] = useState(false);
@@ -38,7 +40,7 @@ export function AdminPasswordGate({ children }: Props) {
 
   if (unlocked) {
     return (
-      <div className="relative">
+      <div className="relative h-screen overflow-y-auto">
         <div className="mx-auto max-w-5xl px-4 pt-5 md:px-8">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-neon-green/25 bg-card/50 p-3">
             <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-neon-green">
@@ -52,10 +54,16 @@ export function AdminPasswordGate({ children }: Props) {
                 <KeyRound className="h-3 w-3" /> Change password
               </button>
               <button
-                onClick={() => { sessionStorage.removeItem(UNLOCK_KEY); setUnlocked(false); }}
-                className="rounded-lg border border-border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:text-neon-red"
+                onClick={() => {
+                  sessionStorage.removeItem(UNLOCK_KEY);
+                  setUnlocked(false);
+                  setValue("");
+                  toast.success("Admin logged out");
+                  navigate("/", { replace: true });
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-neon-red/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-neon-red transition-all hover:bg-neon-red/10"
               >
-                Lock
+                <LogOut className="h-3 w-3" /> Logout
               </button>
             </div>
           </div>
