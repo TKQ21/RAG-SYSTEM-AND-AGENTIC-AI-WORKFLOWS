@@ -83,6 +83,7 @@ export default function Admin() {
   const [globalQueries, setGlobalQueries] = useState<GlobalQueryRow[]>([]);
   const [globalDocs, setGlobalDocs] = useState<GlobalDocRow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [openEmail, setOpenEmail] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -113,8 +114,8 @@ export default function Admin() {
     const api = supabase as any;
     const [ov, gq, gd] = await Promise.all([
       api.rpc("admin_user_overview"),
-      api.rpc("admin_recent_queries", { _limit: 100 }),
-      api.rpc("admin_recent_documents", { _limit: 100 }),
+      api.rpc("admin_recent_queries", { _limit: 500 }),
+      api.rpc("admin_recent_documents", { _limit: 500 }),
     ]);
     if (!ov.error) {
       setIsAdmin(true);
@@ -129,6 +130,31 @@ export default function Admin() {
   }, [user?.id, activeSpaceId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Per-email activity: which user uploaded which document and what they asked
+  const perEmail = useMemo(() => {
+    const map = new Map<string, { email: string; docs: GlobalDocRow[]; queries: GlobalQueryRow[]; lastActive: number }>();
+    const ensure = (email: string | null) => {
+      const key = email || "unknown";
+      if (!map.has(key)) map.set(key, { email: key, docs: [], queries: [], lastActive: 0 });
+      return map.get(key)!;
+    };
+    userRows.forEach((u) => {
+      const e = ensure(u.email);
+      e.lastActive = Math.max(e.lastActive, new Date(u.last_active).getTime() || 0);
+    });
+    globalDocs.forEach((d) => {
+      const e = ensure(d.email);
+      e.docs.push(d);
+      e.lastActive = Math.max(e.lastActive, new Date(d.created_at).getTime() || 0);
+    });
+    globalQueries.forEach((q) => {
+      const e = ensure(q.email);
+      e.queries.push(q);
+      e.lastActive = Math.max(e.lastActive, new Date(q.created_at).getTime() || 0);
+    });
+    return Array.from(map.values()).sort((a, b) => b.lastActive - a.lastActive);
+  }, [userRows, globalDocs, globalQueries]);
 
   const stats = useMemo(() => {
     const totalChunks = docs.reduce((s, d) => s + (d.chunk_count || 0), 0);
@@ -308,6 +334,89 @@ export default function Admin() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* All uploads across users */}
+        {isAdmin && (
+          <div className="rounded-xl border border-neon-green/25 bg-card/50 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-neon-green">
+              <Users className="h-3.5 w-3.5" /> Activity by email ({perEmail.length})
+            </div>
+            {perEmail.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">No user activity yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {perEmail.map((u) => {
+                  const open = openEmail === u.email;
+                  return (
+                    <div key={u.email} className="rounded-lg border border-border/40 bg-background/40">
+                      <button
+                        onClick={() => setOpenEmail(open ? null : u.email)}
+                        className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left text-[11px]"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neon-cyan">{u.email}</span>
+                        <span className="rounded border border-neon-pink/30 bg-neon-pink/10 px-1.5 py-0.5 font-mono text-[10px] text-neon-pink">
+                          {u.docs.length} docs
+                        </span>
+                        <span className="rounded border border-neon-purple/30 bg-neon-purple/10 px-1.5 py-0.5 font-mono text-[10px] text-neon-purple">
+                          {u.queries.length} questions
+                        </span>
+                        <span className="font-mono text-[10px] text-muted-foreground">
+                          {u.lastActive ? new Date(u.lastActive).toLocaleString() : "—"}
+                        </span>
+                      </button>
+                      {open && (
+                        <div className="grid gap-3 border-t border-border/40 px-3 py-3 md:grid-cols-2">
+                          <div>
+                            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-neon-pink">
+                              <FileText className="h-3 w-3" /> Documents uploaded
+                            </div>
+                            {u.docs.length === 0 ? (
+                              <p className="text-[11px] text-muted-foreground">No uploads.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {u.docs.map((d) => (
+                                  <li key={d.id} className="flex items-center gap-2 rounded border border-border/30 px-2 py-1 text-[11px]">
+                                    <span className="min-w-0 flex-1 truncate text-foreground/85">{d.name}</span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">{d.chunk_count} chunks</span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      {new Date(d.created_at).toLocaleDateString()}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                          <div>
+                            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-neon-cyan">
+                              <Search className="h-3 w-3" /> Questions asked
+                            </div>
+                            {u.queries.length === 0 ? (
+                              <p className="text-[11px] text-muted-foreground">No questions.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {u.queries.map((q) => (
+                                  <li key={q.id} className="flex items-center gap-2 rounded border border-border/30 px-2 py-1 text-[11px]">
+                                    <span className="rounded border border-neon-purple/30 bg-neon-purple/10 px-1 font-mono text-[9px] text-neon-purple">
+                                      {q.mode}
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate text-foreground/85">{q.query}</span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      {new Date(q.created_at).toLocaleDateString()}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
