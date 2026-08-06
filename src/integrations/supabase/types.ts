@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_emails: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          email: string
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          email: string
+          id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+        }
+        Relationships: []
+      }
       chat_history: {
         Row: {
           created_at: string | null
@@ -332,6 +353,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_add_admin_email: { Args: { _email: string }; Returns: undefined }
+      admin_all_spaces: {
+        Args: never
+        Returns: {
+          chunk_count: number
+          created_at: string
+          description: string
+          doc_count: number
+          domain: string
+          id: string
+          is_private: boolean
+          name: string
+          owner_id: string
+        }[]
+      }
+      admin_list_admin_emails: {
+        Args: never
+        Returns: {
+          created_at: string
+          email: string
+          has_account: boolean
+        }[]
+      }
       admin_recent_documents: {
         Args: { _limit?: number }
         Returns: {
@@ -357,6 +401,7 @@ export type Database = {
           success: boolean
         }[]
       }
+      admin_remove_admin_email: { Args: { _email: string }; Returns: undefined }
       admin_user_overview: {
         Args: never
         Returns: {
@@ -431,6 +476,7 @@ export type Database = {
         Args: { _space_id: string; _user_id: string }
         Returns: string
       }
+      sync_my_admin_role: { Args: never; Returns: boolean }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
