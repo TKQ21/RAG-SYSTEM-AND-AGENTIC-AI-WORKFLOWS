@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus, Network, Gauge } from "lucide-react";
+import { Brain, Cpu, FileSearch, Database, Search, Shield, BarChart3, FlaskConical, CheckCircle2, History, Sparkles, X, Plus, Gauge } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { DocumentPanel } from "./DocumentPanel";
 import { SpaceSelector } from "./SpaceSelector";
@@ -32,6 +32,8 @@ interface SidebarProps {
   spaces?: KnowledgeSpace[];
   activeSpaceId?: string | null;
   onSelectSpace?: (id: string | null) => void;
+  /** Admins get upload + dashboard controls; normal users only chat. */
+  isAdmin?: boolean;
 }
 
 const STAT_STYLES = [
@@ -41,7 +43,7 @@ const STAT_STYLES = [
   { label: "Queries", border: "border-neon-yellow/40", text: "text-neon-yellow", glow: "0 0 14px hsl(48 100% 60% / 0.18)" },
 ];
 
-export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onNewChat, onCloseMobile, spaces = [], activeSpaceId = null, onSelectSpace }: SidebarProps) {
+export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDoc, totalChunks, totalQueries, onOpenHistory, onNewChat, onCloseMobile, spaces = [], activeSpaceId = null, onSelectSpace, isAdmin = false }: SidebarProps) {
   const statValues = [
     documents.length,
     documents.reduce((s, d) => s + (d.chunks || 0), 0),
@@ -86,23 +88,18 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
         <SpaceSelector spaces={spaces} activeSpaceId={activeSpaceId} onSelect={onSelectSpace} />
       )}
 
-      {/* Knowledge sources */}
-      <div className="border-b border-neon-pink/10 px-4 py-2">
-        <Link
-          to="/knowledge"
-          className="flex items-center gap-2 rounded-lg border border-neon-cyan/30 bg-neon-cyan/5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-neon-cyan transition-all hover:bg-neon-cyan/10"
-        >
-          <Network className="h-3.5 w-3.5" />
-          Knowledge Sources
-        </Link>
-        <Link
-          to="/admin"
-          className="mt-2 flex items-center gap-2 rounded-lg border border-neon-purple/30 bg-neon-purple/5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-neon-purple transition-all hover:bg-neon-purple/10"
-        >
-          <Gauge className="h-3.5 w-3.5" />
-          Admin Dashboard
-        </Link>
-      </div>
+      {/* Admin-only entry point — knowledge sources & spaces live inside the dashboard */}
+      {isAdmin && (
+        <div className="border-b border-neon-pink/10 px-4 py-2">
+          <Link
+            to="/admin"
+            className="flex items-center gap-2 rounded-lg border border-neon-purple/30 bg-neon-purple/5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-neon-purple transition-all hover:bg-neon-purple/10"
+          >
+            <Gauge className="h-3.5 w-3.5" />
+            Admin Dashboard
+          </Link>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {/* Stats */}
@@ -119,12 +116,28 @@ export function AppSidebar({ mode, onModeChange, documents, onUpload, onRemoveDo
           ))}
         </div>
 
-        {/* Upload */}
+        {/* Knowledge library — admins can upload, users only see what's indexed */}
         <div className="px-4">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-neon-pink" style={{ textShadow: "0 0 8px hsl(330 100% 62% / 0.5)" }}>
-            Upload Documents
+            {isAdmin ? "Upload Documents" : "Knowledge Library"}
           </h3>
-          <DocumentPanel documents={documents} onUpload={onUpload} onRemove={onRemoveDoc} />
+          {isAdmin ? (
+            <DocumentPanel documents={documents} onUpload={onUpload} onRemove={onRemoveDoc} />
+          ) : documents.length === 0 ? (
+            <p className="rounded-lg border border-border/50 bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground">
+              Is knowledge space me abhi kuch nahi hai. Admin documents aur sources add karta hai — aap sirf sawaal poochho.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {documents.map((d) => (
+                <li key={d.id} className="flex items-center gap-2 rounded-lg border border-border/50 bg-secondary/20 px-3 py-1.5">
+                  <FileSearch className="h-3 w-3 shrink-0 text-neon-cyan" />
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/85">{d.name}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">{d.chunks || 0}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* Pipeline */}

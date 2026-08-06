@@ -8,6 +8,7 @@ import { useAgentChat } from "@/hooks/useAgentChat";
 import { IntroAnimation } from "@/components/IntroAnimation";
 import { useAuth } from "@/hooks/useAuth";
 import { useSpaces } from "@/hooks/useSpaces";
+import { useRole } from "@/hooks/useRole";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -40,6 +41,7 @@ const Index = () => {
 
 function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
   const { spaces, activeSpaceId, setActiveSpaceId } = useSpaces(userId);
+  const { isAdmin } = useRole(userId);
   const {
     messages, isProcessing, currentSteps, mode, setMode,
     documents, sendMessage, uploadDocument, removeDocument,
@@ -115,6 +117,7 @@ function MainApp({ userId, userEmail }: { userId: string; userEmail: string }) {
           spaces={spaces}
           activeSpaceId={activeSpaceId}
           onSelectSpace={setActiveSpaceId}
+          isAdmin={isAdmin}
         />
       </div>
 
